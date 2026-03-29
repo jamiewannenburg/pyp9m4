@@ -10,7 +10,7 @@ from pyp9m4 import Mace4, Prover9
 from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers import parse_prover9_output
 from pyp9m4.parsers.mace4 import extract_interpretation_blocks, parse_mace4_output
-from pyp9m4.resolver import BinaryResolver
+from pyp9m4.resolver import BinaryResolver, CachedBinariesError
 from pyp9m4.runner import RunStatus, SubprocessInvocation, run_sync
 
 _CORPUS = Path(__file__).resolve().parent / "corpus" / "e2e"
@@ -115,6 +115,23 @@ def test_e2e_mace4_facade_eliminate_isomorphic(resolver: BinaryResolver) -> None
     m4 = Mace4(resolver=resolver, domain_size=2, timeout_s=120)
     models = list(m4.models(text, eliminate_isomorphic=True))
     assert isinstance(models, list)
+
+
+@pytest.mark.integration
+def test_e2e_clausetester_on_mace4_interpretation(resolver: BinaryResolver) -> None:
+    try:
+        resolver.resolve("clausetester")
+    except CachedBinariesError:
+        pytest.skip("clausetester not available in resolved LADR bundle")
+    m4 = resolver.resolve("mace4")
+    text = (_CORPUS / "mace4_sat.in").read_text(encoding="utf-8")
+    r1 = run_sync(SubprocessInvocation(argv=(str(m4), "-n", "2"), stdin=text, timeout_s=120))
+    assert r1.status == RunStatus.SUCCEEDED
+    parsed = parse_mace4_output(r1.stdout)
+    assert len(parsed.interpretations) >= 1
+    mi = parsed.interpretations[0]
+    r2 = mi.test_clause("P(a).\n", resolver=resolver, timeout_s=120)
+    assert r2.status == RunStatus.SUCCEEDED
 
 
 @pytest.mark.integration

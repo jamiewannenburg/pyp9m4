@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import ast
+import html
+import os
 import re
+import tempfile
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from pyp9m4.parsers.common import ParseWarning, split_ladr_section_blocks
+from pyp9m4.resolver import BinaryResolver
+from pyp9m4.runner import SubprocessInvocation, ToolRunResult, run_sync
 
 
 _INTERP_NEEDLE = "interpretation("
@@ -81,13 +89,534 @@ class StandardAssignment:
     """Right-hand side after ``=`` (trimmed)."""
 
 
+def _split_lhs_value(rhs: str) -> tuple[str, int] | None:
+    """Split ``lhs = value`` on the last ``=``; return ``(lhs, int_value)`` or ``None``."""
+    rhs = rhs.strip()
+    idx = rhs.rfind("=")
+    if idx < 0:
+        return None
+    lhs, val_s = rhs[:idx].strip(), rhs[idx + 1 :].strip()
+    try:
+        v = int(val_s)
+    except ValueError:
+        return None
+    return lhs, v
+
+
+def _split_args_depth0(inner: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for i, c in enumerate(inner):
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(inner[start:i].strip())
+            start = i + 1
+    parts.append(inner[start:].strip())
+    return [p for p in parts if p]
+
+
+def _parse_domain_arg(token: str) -> int:
+    t = token.strip()
+    if t.startswith("(") and t.endswith(")"):
+        inner = t[1:-1].strip()
+        try:
+            return int(inner)
+        except ValueError as e:
+            raise ValueError(f"bad parenthesized arg {token!r}") from e
+    return int(t)
+
+
+def _parse_assignment_lhs(lhs: str) -> tuple[str, tuple[int, ...]] | None:
+    """Return ``(symbol, args)`` for constants ``sym`` (empty args) or ``sym(a,b,...)``."""
+    lhs = lhs.strip()
+    if not lhs:
+        return None
+    p = lhs.find("(")
+    if p < 0:
+        return lhs, ()
+    if not lhs.endswith(")"):
+        return None
+    name = lhs[:p].strip()
+    if not name:
+        return None
+    inner = lhs[p + 1 : -1]
+    try:
+        args = tuple(_parse_domain_arg(x) for x in _split_args_depth0(inner))
+    except ValueError:
+        return None
+    return name, args
+
+
+def _parse_standard_rhs(
+    kind: str, rhs: str
+) -> tuple[str, tuple[int, ...], int, bool] | None:
+    """Parse one assignment rhs into ``(name, args, value, is_relation)`` or ``None``."""
+    sp = _split_lhs_value(rhs)
+    if sp is None:
+        return None
+    lhs, val = sp
+    parsed = _parse_assignment_lhs(lhs)
+    if parsed is None:
+        return None
+    name, args = parsed
+    is_relation = kind == "relation"
+    return name, args, val, is_relation
+
+
+def _build_interpretation_tables(
+    assigns: tuple[StandardAssignment, ...],
+) -> tuple[
+    tuple[tuple[str, tuple[int, ...], int], ...],
+    tuple[tuple[str, tuple[int, ...], bool], ...],
+    tuple[tuple[str, int], ...],
+    tuple[tuple[str, int], ...],
+    tuple[ParseWarning, ...],
+]:
+    fn_rows: list[tuple[str, tuple[int, ...], int]] = []
+    rel_rows: list[tuple[str, tuple[int, ...], bool]] = []
+    fn_arity: dict[str, int] = {}
+    rel_arity: dict[str, int] = {}
+    warns: list[ParseWarning] = []
+
+    for a in assigns:
+        row = _parse_standard_rhs(a.kind, a.rhs)
+        if row is None:
+            warns.append(
+                ParseWarning(
+                    "assignment_parse_failed",
+                    f"could not parse {a.kind} assignment: {a.rhs!r}",
+                )
+            )
+            continue
+        name, args, val, is_relation = row
+        arity = len(args)
+        if is_relation:
+            prev = rel_arity.get(name)
+            if prev is not None and prev != arity:
+                warns.append(
+                    ParseWarning(
+                        "relation_arity_mismatch",
+                        f"relation {name!r}: arity {prev} vs {arity}",
+                    )
+                )
+            else:
+                rel_arity[name] = arity
+            rel_rows.append((name, args, val != 0))
+        else:
+            prev = fn_arity.get(name)
+            if prev is not None and prev != arity:
+                warns.append(
+                    ParseWarning(
+                        "function_arity_mismatch",
+                        f"function {name!r}: arity {prev} vs {arity}",
+                    )
+                )
+            else:
+                fn_arity[name] = arity
+            fn_rows.append((name, args, val))
+
+    fn_rows.sort(key=lambda t: (t[0], t[1]))
+    rel_rows.sort(key=lambda t: (t[0], t[1]))
+    fn_ar_t = tuple(sorted(fn_arity.items()))
+    rel_ar_t = tuple(sorted(rel_arity.items()))
+    return (
+        tuple(fn_rows),
+        tuple(rel_rows),
+        fn_ar_t,
+        rel_ar_t,
+        tuple(warns),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Mace4Interpretation:
-    """One extracted model."""
+    """One extracted model with queryable function/relation tables (standard format)."""
 
     raw: str
     domain_size: int | None
     standard_assignments: tuple[StandardAssignment, ...]
+    function_entries: tuple[tuple[str, tuple[int, ...], int], ...]
+    relation_entries: tuple[tuple[str, tuple[int, ...], bool], ...]
+    function_arities: tuple[tuple[str, int], ...]
+    relation_arities: tuple[tuple[str, int], ...]
+
+    def _functions_map(self) -> dict[str, int]:
+        return dict(self.function_arities)
+
+    def _relations_map(self) -> dict[str, int]:
+        return dict(self.relation_arities)
+
+    def _fn_lookup(self) -> dict[tuple[str, tuple[int, ...]], int]:
+        return {(n, a): v for n, a, v in self.function_entries}
+
+    def _rel_lookup(self) -> dict[tuple[str, tuple[int, ...]], bool]:
+        return {(n, a): v for n, a, v in self.relation_entries}
+
+    @property
+    def functions(self) -> Mapping[str, int]:
+        """Map each function symbol to its arity."""
+        return self._functions_map()
+
+    @property
+    def relations(self) -> Mapping[str, int]:
+        """Map each relation symbol to its arity."""
+        return self._relations_map()
+
+    @property
+    def function_symbols(self) -> tuple[str, ...]:
+        return tuple(n for n, _ in self.function_arities)
+
+    @property
+    def relation_symbols(self) -> tuple[str, ...]:
+        return tuple(n for n, _ in self.relation_arities)
+
+    def _check_domain_and_arity(
+        self, kind: str, symbol: str, args: tuple[int, ...], expected_kind: str
+    ) -> None:
+        if self.domain_size is None:
+            raise KeyError("domain_size is unknown; cannot evaluate")
+        d = self.domain_size
+        for x in args:
+            if x < 0 or x >= d:
+                raise KeyError(f"argument {x} out of domain [0, {d})")
+        arities = self._relations_map() if expected_kind == "relation" else self._functions_map()
+        if symbol not in arities:
+            raise KeyError(f"unknown {expected_kind} symbol {symbol!r}")
+        if len(args) != arities[symbol]:
+            raise KeyError(
+                f"{symbol!r} has arity {arities[symbol]}, got {len(args)} arguments"
+            )
+
+    def holds(self, relation: str, *args: int) -> bool:
+        """True iff the relation holds on ``args`` (integers in ``[0, domain_size)``)."""
+        t = tuple(args)
+        self._check_domain_and_arity("relation", relation, t, "relation")
+        key = (relation, t)
+        lk = self._rel_lookup()
+        if key not in lk:
+            raise KeyError(f"no value for relation {relation}{t}")
+        return lk[key]
+
+    def value_at(self, function: str, *args: int) -> int:
+        """Value of ``function`` at ``args``."""
+        t = tuple(args)
+        self._check_domain_and_arity("function", function, t, "function")
+        key = (function, t)
+        lk = self._fn_lookup()
+        if key not in lk:
+            raise KeyError(f"no value for function {function}{t}")
+        return lk[key]
+
+    def as_relation(self, name: str) -> Callable[..., bool]:
+        """Callable taking ``arity`` domain integers; same as :meth:`holds`."""
+        if name not in self._relations_map():
+            raise KeyError(f"unknown relation {name!r}")
+        arity = self._relations_map()[name]
+
+        def _rel(*xs: int) -> bool:
+            if len(xs) != arity:
+                raise TypeError(f"{name!r} expects {arity} arguments, got {len(xs)}")
+            return self.holds(name, *xs)
+
+        return _rel
+
+    def as_function(self, name: str) -> Callable[..., int]:
+        """Callable taking ``arity`` domain integers; same as :meth:`value_at`."""
+        if name not in self._functions_map():
+            raise KeyError(f"unknown function {name!r}")
+        arity = self._functions_map()[name]
+
+        def _fn(*xs: int) -> int:
+            if len(xs) != arity:
+                raise TypeError(f"{name!r} expects {arity} arguments, got {len(xs)}")
+            return self.value_at(name, *xs)
+
+        return _fn
+
+    def iter_relation_tuples(self, name: str) -> Iterator[tuple[tuple[int, ...], bool]]:
+        """Yield ``(args, holds)`` for every tuple listed for relation ``name``."""
+        for n, args, val in self.relation_entries:
+            if n == name:
+                yield args, val
+
+    def iter_function_entries(self, name: str) -> Iterator[tuple[tuple[int, ...], int]]:
+        """Yield ``(args, value)`` for every row listed for function ``name``."""
+        for n, args, val in self.function_entries:
+            if n == name:
+                yield args, val
+
+    def format_tables(self, *, max_arity3_rows: int = 64) -> str:
+        """Plain-text tables (same body as :meth:`__str__` without header line)."""
+        return _format_interpretation_tables(self, max_arity3_rows=max_arity3_rows)
+
+    def __repr__(self) -> str:
+        return (
+            f"Mace4Interpretation(domain_size={self.domain_size!r}, "
+            f"functions={len(self.function_arities)}, relations={len(self.relation_arities)})"
+        )
+
+    def __str__(self) -> str:
+        parts = [
+            f"Mace4Interpretation(domain_size={self.domain_size})",
+            self.format_tables(),
+        ]
+        return "\n".join(parts)
+
+    def _repr_html_(self) -> str:
+        return _html_interpretation_tables(self)
+
+    def _repr_pretty_(self, p: Any, cycle: bool) -> None:
+        if cycle:
+            p.text("Mace4Interpretation(...)")
+            return
+        p.text(str(self))
+
+    def test_clause(
+        self,
+        clause: str,
+        *,
+        resolver: BinaryResolver | None = None,
+        clausetester_executable: Path | str | None = None,
+        cwd: Path | str | None = None,
+        timeout_s: float | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> ToolRunResult:
+        """Run ``clausetester`` on this interpretation (temp file) with ``clause`` on stdin.
+
+        LADR expects: ``clausetester <interp_file> < <clauses_stream>``. A trailing ``.`` is
+        appended to the interpretation text when missing (required by the LADR term reader).
+        """
+        exe = (
+            Path(clausetester_executable)
+            if clausetester_executable is not None
+            else (resolver or BinaryResolver()).resolve("clausetester")
+        )
+        # LADR's reader expects a terminating period after the interpretation term.
+        body = self.raw.rstrip()
+        if not body.endswith("."):
+            body = body + "."
+        data = body + "\n"
+        tmp_path: Path | None = None
+        try:
+            fd, tmp_path_str = tempfile.mkstemp(suffix=".interp", prefix="pyp9m4_")
+            tmp_path = Path(tmp_path_str)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(data)
+            inv = SubprocessInvocation(
+                argv=(str(exe), str(tmp_path)),
+                cwd=cwd,
+                env=env,
+                stdin=clause if clause.endswith("\n") else clause + "\n",
+                timeout_s=timeout_s,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            return run_sync(inv)
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
+def _format_interpretation_tables(mi: Mace4Interpretation, *, max_arity3_rows: int) -> str:
+    lines: list[str] = []
+    d = mi.domain_size
+
+    def sym_line(title: str, arities: tuple[tuple[str, int], ...]) -> None:
+        if not arities:
+            lines.append(f"  ({title}: none)")
+            return
+        bits = [f"{n}/{a}" for n, a in arities]
+        lines.append(f"  {title}: " + ", ".join(bits))
+
+    sym_line("Functions", mi.function_arities)
+    sym_line("Relations", mi.relation_arities)
+    lines.append("")
+
+    by_fn: dict[str, list[tuple[tuple[int, ...], int]]] = {}
+    for n, args, v in mi.function_entries:
+        by_fn.setdefault(n, []).append((args, v))
+    for name in sorted(by_fn.keys()):
+        rows = sorted(by_fn[name], key=lambda x: x[0])
+        ar = mi._functions_map()[name]
+        lines.append(f"  [{name}] arity {ar}")
+        if ar == 0:
+            lines.append(f"    -> {rows[0][1]}")
+        elif ar == 1 and d is not None:
+            w = max(3, len(str(d - 1)), len(str(max(v for _, v in rows))))
+            header = " " * 4 + " ".join(f"{i:>{w}}" for i in range(d))
+            line = " " * 4 + " ".join(f"{dict(rows).get((i,), '-'):>{w}}" for i in range(d))
+            lines.append(header)
+            lines.append(line)
+        elif ar == 2 and d is not None:
+            w = max(3, len(str(d - 1)), len(str(max(v for _, v in rows))))
+            top = " " * (w + 2) + " ".join(f"{j:>{w}}" for j in range(d))
+            lines.append(top)
+            grid = {(a[0], a[1]): v for a, v in rows if len(a) == 2}
+            for i in range(d):
+                row_bits = [f"{grid.get((i, j), '-'):>{w}}" for j in range(d)]
+                lines.append(f"  {i:>{w}} | " + " ".join(row_bits))
+        else:
+            nshow = 0
+            for args, v in rows:
+                if ar >= 3 and nshow >= max_arity3_rows:
+                    lines.append(f"    ... ({len(rows) - nshow} more)")
+                    break
+                lines.append(f"    {args} -> {v}")
+                nshow += 1
+        lines.append("")
+
+    by_rel: dict[str, list[tuple[tuple[int, ...], bool]]] = {}
+    for n, args, v in mi.relation_entries:
+        by_rel.setdefault(n, []).append((args, v))
+    for name in sorted(by_rel.keys()):
+        rows = sorted(by_rel[name], key=lambda x: x[0])
+        ar = mi._relations_map()[name]
+        lines.append(f"  [{name}] arity {ar}")
+        if ar == 0:
+            lines.append(f"    -> {rows[0][1]}")
+        elif ar == 1 and d is not None:
+            w = 3
+            header = " " * 4 + " ".join(f"{i:>{w}}" for i in range(d))
+            tf = {i: ("T" if dict(rows).get((i,), False) else "F") for i in range(d)}
+            line = " " * 4 + " ".join(f"{tf[i]:>{w}}" for i in range(d))
+            lines.append(header)
+            lines.append(line)
+        elif ar == 2 and d is not None:
+            w = 3
+            top = " " * (w + 2) + " ".join(f"{j:>{w}}" for j in range(d))
+            lines.append(top)
+            grid = {(a[0], a[1]): v for a, v in rows if len(a) == 2}
+            for i in range(d):
+                row_bits2 = []
+                for j in range(d):
+                    if (i, j) in grid:
+                        row_bits2.append("T" if grid[(i, j)] else "F")
+                    else:
+                        row_bits2.append("-")
+                lines.append(f"  {i:>{w}} | " + " ".join(f"{x:>{w}}" for x in row_bits2))
+        else:
+            nshow = 0
+            for args, v in rows:
+                if ar >= 3 and nshow >= max_arity3_rows:
+                    lines.append(f"    ... ({len(rows) - nshow} more)")
+                    break
+                lines.append(f"    {args} -> {v}")
+                nshow += 1
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+def _html_interpretation_tables(mi: Mace4Interpretation) -> str:
+    esc = html.escape
+    chunks: list[str] = [
+        f"<div class='pyp9m4-mace4interp'><p><b>Mace4Interpretation</b> "
+        f"domain_size={esc(str(mi.domain_size))}</p>"
+    ]
+    chunks.append("<p><b>Functions</b> " + esc(", ".join(f"{n}/{a}" for n, a in mi.function_arities)) + "</p>")
+    chunks.append("<p><b>Relations</b> " + esc(", ".join(f"{n}/{a}" for n, a in mi.relation_arities)) + "</p>")
+
+    d = mi.domain_size
+
+    by_fn: dict[str, list[tuple[tuple[int, ...], int]]] = {}
+    for n, args, v in mi.function_entries:
+        by_fn.setdefault(n, []).append((args, v))
+    for name in sorted(by_fn.keys()):
+        rows = sorted(by_fn[name], key=lambda x: x[0])
+        ar = mi._functions_map()[name]
+        chunks.append(f"<h4>{esc(name)} <small>(function, arity {ar})</small></h4>")
+        if ar == 0:
+            chunks.append(f"<p>{esc(str(rows[0][1]))}</p>")
+        elif ar == 1 and d is not None:
+            mp = dict(rows)
+            chunks.append("<table class='pyp9m4-mace4interp-tbl' border='1' style='border-collapse:collapse'>")
+            chunks.append("<tr><th>x</th>")
+            for i in range(d):
+                chunks.append(f"<th>{i}</th>")
+            chunks.append("</tr><tr><th>f(x)</th>")
+            for i in range(d):
+                chunks.append(f"<td>{esc(str(mp.get((i,), '-')))}</td>")
+            chunks.append("</tr></table>")
+        elif ar == 2 and d is not None:
+            grid = {(a[0], a[1]): v for a, v in rows if len(a) == 2}
+            chunks.append("<table class='pyp9m4-mace4interp-tbl' border='1' style='border-collapse:collapse'>")
+            chunks.append("<tr><th></th>")
+            for j in range(d):
+                chunks.append(f"<th>{j}</th>")
+            chunks.append("</tr>")
+            for i in range(d):
+                chunks.append(f"<tr><th>{i}</th>")
+                for j in range(d):
+                    v = grid.get((i, j), "-")
+                    chunks.append(f"<td>{esc(str(v))}</td>")
+                chunks.append("</tr>")
+            chunks.append("</table>")
+        else:
+            chunks.append("<table class='pyp9m4-mace4interp-tbl' border='1' style='border-collapse:collapse'>")
+            chunks.append("<tr><th>args</th><th>value</th></tr>")
+            for args, v in rows[:64]:
+                chunks.append(f"<tr><td>{esc(repr(args))}</td><td>{esc(str(v))}</td></tr>")
+            if len(rows) > 64:
+                chunks.append(f"<tr><td colspan='2'>… {len(rows) - 64} more</td></tr>")
+            chunks.append("</table>")
+
+    by_rel: dict[str, list[tuple[tuple[int, ...], bool]]] = {}
+    for n, args, v in mi.relation_entries:
+        by_rel.setdefault(n, []).append((args, v))
+    for name in sorted(by_rel.keys()):
+        rows = sorted(by_rel[name], key=lambda x: x[0])
+        ar = mi._relations_map()[name]
+        chunks.append(f"<h4>{esc(name)} <small>(relation, arity {ar})</small></h4>")
+        if ar == 0:
+            chunks.append(f"<p>{esc(str(rows[0][1]))}</p>")
+        elif ar == 1 and d is not None:
+            mp = {a[0]: v for a, v in rows if len(a) == 1}
+            chunks.append("<table class='pyp9m4-mace4interp-tbl' border='1' style='border-collapse:collapse'>")
+            chunks.append("<tr><th>x</th>")
+            for i in range(d):
+                chunks.append(f"<th>{i}</th>")
+            chunks.append("</tr><tr><th>R(x)</th>")
+            for i in range(d):
+                if i in mp:
+                    chunks.append(f"<td>{'T' if mp[i] else 'F'}</td>")
+                else:
+                    chunks.append("<td>-</td>")
+            chunks.append("</tr></table>")
+        elif ar == 2 and d is not None:
+            grid = {(a[0], a[1]): v for a, v in rows if len(a) == 2}
+            chunks.append("<table class='pyp9m4-mace4interp-tbl' border='1' style='border-collapse:collapse'>")
+            chunks.append("<tr><th></th>")
+            for j in range(d):
+                chunks.append(f"<th>{j}</th>")
+            chunks.append("</tr>")
+            for i in range(d):
+                chunks.append(f"<tr><th>{i}</th>")
+                for j in range(d):
+                    if (i, j) in grid:
+                        chunks.append(f"<td>{'T' if grid[(i, j)] else 'F'}</td>")
+                    else:
+                        chunks.append("<td>-</td>")
+                chunks.append("</tr>")
+            chunks.append("</table>")
+        else:
+            chunks.append("<table class='pyp9m4-mace4interp-tbl' border='1' style='border-collapse:collapse'>")
+            chunks.append("<tr><th>args</th><th>holds</th></tr>")
+            for args, v in rows[:64]:
+                chunks.append(f"<tr><td>{esc(repr(args))}</td><td>{esc(str(v))}</td></tr>")
+            if len(rows) > 64:
+                chunks.append(f"<tr><td colspan='2'>… {len(rows) - 64} more</td></tr>")
+            chunks.append("</table>")
+
+    chunks.append("</div>")
+    return "".join(chunks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,11 +645,18 @@ def _parse_standard_block(block: str) -> tuple[Mace4Interpretation, tuple[ParseW
             assigns.append(StandardAssignment(kind=m.group(1).lower(), rhs=m.group(2).rstrip(",").strip()))
     if domain is None:
         warnings.append(ParseWarning("domain_size_not_found", "could not read interpretation(n,"))
+    assign_t = tuple(assigns)
+    fn_e, rel_e, fn_a, rel_a, tab_warns = _build_interpretation_tables(assign_t)
+    warnings.extend(tab_warns)
     return (
         Mace4Interpretation(
             raw=block,
             domain_size=domain,
-            standard_assignments=tuple(assigns),
+            standard_assignments=assign_t,
+            function_entries=fn_e,
+            relation_entries=rel_e,
+            function_arities=fn_a,
+            relation_arities=rel_a,
         ),
         tuple(warnings),
     )

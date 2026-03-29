@@ -40,7 +40,7 @@ _PINNED_RELEASE_SHA256: Final[dict[str, str]] = {
     "ladr-windows.zip": "c969a21508cda706ce4b49e8ca16ccb208b9124143b804aeb605a1ea14bed8f8",
 }
 
-ToolName = Literal["prover9", "mace4", "interpformat", "isofilter", "prooftrans"]
+ToolName = Literal["prover9", "mace4", "interpformat", "isofilter", "prooftrans", "clausetester"]
 
 _TOOL_STEMS: Final[dict[ToolName, str]] = {
     "prover9": "prover9",
@@ -48,6 +48,7 @@ _TOOL_STEMS: Final[dict[ToolName, str]] = {
     "interpformat": "interpformat",
     "isofilter": "isofilter",
     "prooftrans": "prooftrans",
+    "clausetester": "clausetester",
 }
 
 

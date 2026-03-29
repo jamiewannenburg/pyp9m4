@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
+from pyp9m4.parsers import mace4 as mace4_mod
 from pyp9m4.parsers.common import parse_equals_key_values, split_ladr_section_blocks
 from pyp9m4.parsers.mace4 import (
     Mace4InterpretationBuffer,
@@ -9,6 +14,7 @@ from pyp9m4.parsers.mace4 import (
     parse_mace4_output,
 )
 from pyp9m4.parsers.pipeline import inspect_pipeline_text, parse_pipeline_tool_output
+from pyp9m4.runner import RunStatus, SubprocessInvocation, ToolRunResult
 from pyp9m4.parsers.prover9 import parse_prover9_output
 
 
@@ -80,6 +86,93 @@ interpretation( 2, [
     assert mi.domain_size == 2
     kinds = {a.kind for a in mi.standard_assignments}
     assert kinds == {"function", "relation"}
+    assert mi.functions == {"c1": 0, "f": 1}
+    assert mi.relations == {"R": 2}
+    assert mi.value_at("c1") == 0
+    assert mi.value_at("f", 0) == 1
+    assert mi.holds("R", 0, 0) is True
+    assert mi.as_function("f")(0) == 1
+    assert mi.as_relation("R")(0, 0) is True
+    assert list(mi.iter_function_entries("f")) == [((0,), 1)]
+    assert list(mi.iter_relation_tuples("R")) == [((0, 0), True)]
+    assert "Mace4Interpretation" in repr(mi)
+    assert "[c1]" in str(mi) and "[R]" in str(mi)
+    html = mi._repr_html_()
+    assert "<table" in html and "c1" in html and "R" in html
+
+
+def test_mace4_interpretation_nested_relation_arg() -> None:
+    sample = """
+interpretation( 2, [
+   relation = R(1,(0)) = 1,
+]).
+"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    assert mi.holds("R", 1, 0) is True
+
+
+def test_mace4_interpretation_key_errors() -> None:
+    sample = """
+interpretation( 2, [
+   function = f(0) = 1,
+   relation = R(0,0) = 1,
+]).
+"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    with pytest.raises(KeyError):
+        mi.holds("R", 0, 1)
+    with pytest.raises(KeyError):
+        mi.value_at("f", 1)
+    with pytest.raises(KeyError):
+        mi.as_relation("Q")
+    with pytest.raises(TypeError):
+        mi.as_function("f")(0, 1)
+
+
+def test_mace4_test_clause_writes_interp_and_invokes_run_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    file_contents: list[str] = []
+    stdins: list[str | bytes | None] = []
+
+    def fake_run_sync(inv: SubprocessInvocation) -> ToolRunResult:
+        file_contents.append(Path(inv.argv[1]).read_text(encoding="utf-8"))
+        stdins.append(inv.stdin)
+        return ToolRunResult(
+            status=RunStatus.SUCCEEDED,
+            argv=inv.argv,
+            exit_code=0,
+            duration_s=0.0,
+            stdout="ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr(mace4_mod, "run_sync", fake_run_sync)
+    sample = """interpretation(1, [\n   function = c1 = 0,\n]).\n"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    r = mi.test_clause("P(x).\n", clausetester_executable=Path("dummy_clausetester"))
+    assert r.exit_code == 0
+    assert r.stdout == "ok"
+    assert len(file_contents) == 1
+    assert "interpretation(1" in file_contents[0]
+    assert stdins == ["P(x).\n"]
+
+
+def test_mace4_test_clause_appends_missing_period(monkeypatch: pytest.MonkeyPatch) -> None:
+    file_contents: list[str] = []
+
+    def fake_run_sync(inv: SubprocessInvocation) -> ToolRunResult:
+        file_contents.append(Path(inv.argv[1]).read_text(encoding="utf-8"))
+        return ToolRunResult(
+            status=RunStatus.SUCCEEDED,
+            argv=inv.argv,
+            exit_code=0,
+            duration_s=0.0,
+        )
+
+    monkeypatch.setattr(mace4_mod, "run_sync", fake_run_sync)
+    sample_no_dot = """interpretation(1, [\n   function = c1 = 0,\n])"""
+    mi = parse_mace4_output(sample_no_dot + "\n").interpretations[0]
+    mi.test_clause("P(x).\n", clausetester_executable=Path("dummy_clausetester"))
+    assert file_contents[0].rstrip().endswith(").")
 
 
 def test_mace4_portable_only() -> None:
@@ -111,6 +204,8 @@ interpretation( 2, [
     batch = parse_mace4_output(sample).interpretations[0]
     assert mi.domain_size == batch.domain_size == 2
     assert mi.standard_assignments == batch.standard_assignments
+    assert mi.function_entries == batch.function_entries
+    assert mi.relation_entries == batch.relation_entries
     assert mi.raw == batch.raw
     assert "end of model" in buf.buffered_tail
 
