@@ -14,8 +14,10 @@ from pyp9m4.runner import (
     StderrLine,
     StdoutLine,
     SubprocessInvocation,
+    SyncToolRunner,
     ToolRunResult,
     run_sync,
+    stream_events_sync,
 )
 
 
@@ -107,6 +109,43 @@ def test_run_sync() -> None:
     res = run_sync(inv)
     assert isinstance(res, ToolRunResult)
     assert res.stdout.strip() == "42"
+
+
+@pytest.mark.asyncio
+async def test_run_sync_with_running_event_loop() -> None:
+    """Sync wrapper must not call asyncio.run on a thread that already has a loop."""
+    inv = SubprocessInvocation(argv=_py("print(99)"))
+    res = run_sync(inv)
+    assert res.stdout.strip() == "99"
+
+
+def test_stream_events_sync() -> None:
+    code = "import sys\nprint('a')\nprint('b', file=sys.stderr)\n"
+    inv = SubprocessInvocation(argv=_py(code))
+    events = stream_events_sync(inv)
+    assert StdoutLine("a") in events
+    assert StderrLine("b") in events
+
+
+def test_stream_events_sync_parse_hook() -> None:
+    inv = SubprocessInvocation(argv=_py("print('x')"))
+
+    async def hook(e: object):
+        if isinstance(e, StdoutLine) and e.text == "x":
+            yield "extra"
+
+    events = stream_events_sync(inv, parse_hook=hook)
+    assert StdoutLine("x") in events
+    assert "extra" in events
+
+
+def test_sync_tool_runner() -> None:
+    r = SyncToolRunner()
+    inv = SubprocessInvocation(argv=_py("print(3)"))
+    res = r.run(inv)
+    assert res.stdout.strip() == "3"
+    inv2 = SubprocessInvocation(argv=_py("print('z')"))
+    assert StdoutLine("z") in r.stream_events(inv2)
 
 
 @pytest.mark.asyncio

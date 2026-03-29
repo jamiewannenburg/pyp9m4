@@ -17,8 +17,10 @@ from pyp9m4.runner import (
     StdoutLine,
     StreamEvent,
     SubprocessInvocation,
+    SyncToolRunner,
     ToolRunResult,
     run_sync,
+    stream_events_sync,
 )
 
 __all__ = [
@@ -33,11 +35,13 @@ __all__ = [
     "StdoutLine",
     "StreamEvent",
     "SubprocessInvocation",
+    "SyncToolRunner",
     "ToolRunResult",
     "UnsupportedPlatformError",
     "asset_filename_for_platform_key",
     "detect_platform_key",
     "run_sync",
+    "stream_events_sync",
 ]
 
 __version__ = "0.1.0"

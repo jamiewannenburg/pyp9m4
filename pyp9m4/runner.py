@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import enum
 import os
@@ -10,7 +11,9 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 
 class RunStatus(enum.Enum):
@@ -325,6 +328,61 @@ class AsyncToolRunner:
         )
 
 
+def _sync_run_awaitable(factory: Callable[[], Awaitable[T]]) -> T:
+    """Run ``factory()`` to completion from synchronous code.
+
+    Uses :func:`asyncio.run` when the current thread has no running loop. If a loop
+    is already running (e.g. IPython/Jupyter or :mod:`pytest_asyncio`), the awaitable
+    is executed in a worker thread with its own event loop so :func:`asyncio.run`
+    is not nested on the same thread.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+
+    def _in_thread() -> T:
+        return asyncio.run(factory())
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_in_thread).result()
+
+
 def run_sync(inv: SubprocessInvocation) -> ToolRunResult:
-    """Blocking wrapper around :meth:`AsyncToolRunner.run` (uses :func:`asyncio.run`)."""
-    return asyncio.run(AsyncToolRunner().run(inv))
+    """Blocking wrapper around :meth:`AsyncToolRunner.run`.
+
+    Safe to call from sync scripts and from async contexts (e.g. notebooks) on the
+    same thread: if a loop is already running, work runs in a helper thread.
+    """
+    return _sync_run_awaitable(lambda: AsyncToolRunner().run(inv))
+
+
+def stream_events_sync(
+    inv: SubprocessInvocation,
+    *,
+    parse_hook: Callable[[Any], AsyncIterator[Any]] | None = None,
+) -> list[Any]:
+    """Drain :meth:`AsyncToolRunner.stream_events` synchronously; returns all yielded events.
+
+    This buffers the full event stream in memory. For large outputs, prefer the
+    async API or process incrementally in async code.
+    """
+    async def _collect() -> list[Any]:
+        return [e async for e in AsyncToolRunner().stream_events(inv, parse_hook=parse_hook)]
+
+    return _sync_run_awaitable(_collect)
+
+
+class SyncToolRunner:
+    """Blocking façade mirroring :class:`AsyncToolRunner` for scripts and notebooks."""
+
+    def run(self, inv: SubprocessInvocation) -> ToolRunResult:
+        return run_sync(inv)
+
+    def stream_events(
+        self,
+        inv: SubprocessInvocation,
+        *,
+        parse_hook: Callable[[Any], AsyncIterator[Any]] | None = None,
+    ) -> list[Any]:
+        return stream_events_sync(inv, parse_hook=parse_hook)

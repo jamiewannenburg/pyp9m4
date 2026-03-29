@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: sync-shims
     content: Thin sync wrappers over async API for scripts/notebooks
-    status: pending
+    status: completed
   - id: typed-options
     content: Hand-curated option models for prover9, mace4, interpformat, isofilter, prooftrans + CI --help validation
     status: pending
