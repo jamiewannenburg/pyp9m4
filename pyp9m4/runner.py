@@ -7,6 +7,7 @@ import concurrent.futures
 import contextlib
 import enum
 import os
+import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -342,6 +343,10 @@ def _sync_run_awaitable(factory: Callable[[], Awaitable[T]]) -> T:
         return asyncio.run(factory())
 
     def _in_thread() -> T:
+        # Windows: new threads default to a selector loop without subprocess support;
+        # Proactor is required for asyncio.create_subprocess_exec (IPython/Jupyter path).
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         return asyncio.run(factory())
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
