@@ -22,8 +22,9 @@ from pyp9m4.runner import (
     run_sync,
     stream_events_sync,
 )
-from pyp9m4.jobs import JobLifecycle, Mace4JobStatusSnapshot
+from pyp9m4.jobs import JobLifecycle, Mace4JobStatusSnapshot, Prover9JobStatusSnapshot
 from pyp9m4.mace4_facade import Mace4, Mace4SearchHandle
+from pyp9m4.prover9_facade import Prover9, Prover9ProofHandle, Prover9ProofResult
 from pyp9m4.parsers import (
     ParseWarning,
     inspect_pipeline_text,
@@ -43,6 +44,10 @@ __all__ = [
     "Mace4",
     "Mace4JobStatusSnapshot",
     "Mace4SearchHandle",
+    "Prover9",
+    "Prover9JobStatusSnapshot",
+    "Prover9ProofHandle",
+    "Prover9ProofResult",
     "RunStatus",
     "StderrLine",
     "StdoutLine",

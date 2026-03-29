@@ -9,6 +9,17 @@ JobLifecycle = Literal["pending", "running", "succeeded", "failed", "timed_out",
 
 
 @dataclass(frozen=True, slots=True)
+class Prover9JobStatusSnapshot:
+    """JSON-friendly snapshot from :meth:`~pyp9m4.prover9_facade.Prover9ProofHandle.status`."""
+
+    lifecycle: JobLifecycle
+    exit_code: int | None
+    stderr_tail: str
+    argv: tuple[str, ...] = ()
+    """Prover9 argv for the current or last run (debugging)."""
+
+
+@dataclass(frozen=True, slots=True)
 class Mace4JobStatusSnapshot:
     """JSON-friendly snapshot from :meth:`~pyp9m4.mace4_facade.Mace4SearchHandle.status`.
 
