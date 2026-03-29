@@ -22,6 +22,13 @@ from pyp9m4.runner import (
     run_sync,
     stream_events_sync,
 )
+from pyp9m4.parsers import (
+    ParseWarning,
+    inspect_pipeline_text,
+    parse_mace4_output,
+    parse_pipeline_tool_output,
+    parse_prover9_output,
+)
 
 __all__ = [
     "AsyncToolRunner",
@@ -40,6 +47,11 @@ __all__ = [
     "UnsupportedPlatformError",
     "asset_filename_for_platform_key",
     "detect_platform_key",
+    "inspect_pipeline_text",
+    "parse_mace4_output",
+    "parse_pipeline_tool_output",
+    "parse_prover9_output",
+    "ParseWarning",
     "run_sync",
     "stream_events_sync",
 ]

@@ -1,0 +1,98 @@
+"""Tests for :mod:`pyp9m4.parsers`."""
+
+from __future__ import annotations
+
+from pyp9m4.parsers.common import parse_equals_key_values, split_ladr_section_blocks
+from pyp9m4.parsers.mace4 import extract_interpretation_blocks, parse_mace4_output
+from pyp9m4.parsers.pipeline import inspect_pipeline_text, parse_pipeline_tool_output
+from pyp9m4.parsers.prover9 import parse_prover9_output
+
+
+SUBSET_TRANS_TAIL = r"""
+============================== SEARCH ================================
+% Starting search at 0.01 seconds.
+given #1 (I,wt=11): 9 member(f1(x,y),x) | -member(z,x) | member(z,y). [resolve(3,a,4,a)].
+============================== PROOF =================================
+% Proof 1 at 0.01 (+ 0.00) seconds.
+% Length of proof is 14.
+ 18 $F. [ur(12,b,14,a),unit_del(a,15)].
+============================== end of proof ==========================
+============================== STATISTICS ============================
+Given=6. Generated=12. Kept=9. proofs=1. Usable=6. Sos=3. Demods=0. Limbo=0, Disabled=12.
+Megabytes=0.03. User_CPU=0.01, System_CPU=0.00, Wall_clock=0.
+============================== end of statistics =====================
+============================== end of search =========================
+THEOREM PROVED
+Exiting with 1 proof.
+"""
+
+
+def test_parse_prover9_sections_and_stats() -> None:
+    p = parse_prover9_output(SUBSET_TRANS_TAIL)
+    assert "PROOF" in p.sections
+    assert "$F" in p.sections["PROOF"]
+    assert p.statistics["Given"] == "6"
+    assert p.statistics["proofs"] == "1"
+    assert p.statistics["Megabytes"] == "0.03"
+    assert len(p.proof_segments) == 1
+    assert p.proof_segments[0].index == 1
+    assert "THEOREM PROVED" in p.exit_phrases
+
+
+def test_parse_equals_key_values() -> None:
+    d = parse_equals_key_values("Given=6. Generated=12. Kept=9.")
+    assert d["Given"] == "6"
+    assert d["Generated"] == "12"
+    assert d["Kept"] == "9"
+
+
+def test_split_sections_duplicate_warning() -> None:
+    text = """
+============================== A =================================
+one
+============================== A =================================
+two
+"""
+    sections, warns = split_ladr_section_blocks(text)
+    assert sections["A"].strip() == "two"
+    assert any(w.message == "duplicate_section_title" for w in warns)
+
+
+def test_mace4_interpretation_block() -> None:
+    sample = """
+============================== MODEL =================================
+interpretation( 2, [
+   function = c1 = 0,
+   function = f(0) = 1,
+   relation = R(0,0) = 1,
+]).
+============================== end of model ===========================
+"""
+    blocks = extract_interpretation_blocks(sample)
+    assert len(blocks) == 1
+    p = parse_mace4_output(sample)
+    assert len(p.interpretations) == 1
+    mi = p.interpretations[0]
+    assert mi.domain_size == 2
+    kinds = {a.kind for a in mi.standard_assignments}
+    assert kinds == {"function", "relation"}
+
+
+def test_mace4_portable_only() -> None:
+    portable = "[ [ 4, [], [ [ \"function\", \"f\", 1, [0, 1, 2, 3] ] ] ] ]"
+    p = parse_mace4_output(portable)
+    assert len(p.interpretations) == 0
+    assert len(p.portable_lists) == 1
+    assert isinstance(p.portable_lists[0], list)
+
+
+def test_pipeline_helpers() -> None:
+    r = parse_pipeline_tool_output("hello\n% comment\n", "err: something\n")
+    assert r.stdout.startswith("hello")
+    assert "err:" in r.stderr
+    ins = inspect_pipeline_text(r.stdout, r.stderr)
+    assert "% comment" in ins.percent_comments
+    assert ins.stderr_lines[0] == "err: something"
+    assert ins.looks_like_error is False
+    ins2 = inspect_pipeline_text("", "Fatal: bad\n")
+    assert ins2.looks_like_error is True

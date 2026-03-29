@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: parsers-v1
     content: "Domain parsers: Prover9 stats/proof segments; Mace4 models; thinner pipeline tools"
-    status: pending
+    status: completed
   - id: bridges-extras
     content: Optional extras and TPTP/SMT-LIB bridge helpers (no heavy hard deps in core)
     status: pending
