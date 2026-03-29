@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: typed-options
     content: Hand-curated option models for prover9, mace4, interpformat, isofilter, prooftrans + CI --help validation
-    status: pending
+    status: completed
   - id: parsers-v1
     content: "Domain parsers: Prover9 stats/proof segments; Mace4 models; thinner pipeline tools"
     status: pending
