@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from pyp9m4.parsers.common import parse_equals_key_values, split_ladr_section_blocks
-from pyp9m4.parsers.mace4 import extract_interpretation_blocks, parse_mace4_output
+from pyp9m4.parsers.mace4 import (
+    Mace4InterpretationBuffer,
+    extract_interpretation_blocks,
+    parse_mace4_output,
+)
 from pyp9m4.parsers.pipeline import inspect_pipeline_text, parse_pipeline_tool_output
 from pyp9m4.parsers.prover9 import parse_prover9_output
 
@@ -84,6 +88,56 @@ def test_mace4_portable_only() -> None:
     assert len(p.interpretations) == 0
     assert len(p.portable_lists) == 1
     assert isinstance(p.portable_lists[0], list)
+
+
+def test_mace4_interpretation_buffer_matches_batch() -> None:
+    sample = """
+============================== MODEL =================================
+interpretation( 2, [
+   function = c1 = 0,
+   function = f(0) = 1,
+   relation = R(0,0) = 1,
+]).
+============================== end of model ===========================
+"""
+    buf = Mace4InterpretationBuffer()
+    mid = len(sample) // 2
+    a = buf.feed(sample[:mid])
+    assert a == []
+    assert "interpretation(" in buf.buffered_tail
+    b = buf.feed(sample[mid:])
+    assert len(b) == 1
+    mi, _w = b[0]
+    batch = parse_mace4_output(sample).interpretations[0]
+    assert mi.domain_size == batch.domain_size == 2
+    assert mi.standard_assignments == batch.standard_assignments
+    assert mi.raw == batch.raw
+    assert "end of model" in buf.buffered_tail
+
+
+def test_mace4_interpretation_buffer_two_blocks_across_feeds() -> None:
+    b1 = """interpretation( 1, [
+   function = c1 = 0,
+])."""
+    b2 = """interpretation( 2, [
+   function = c1 = 0,
+])."""
+    buf = Mace4InterpretationBuffer()
+    out1 = buf.feed(b1 + b2[:20])
+    out2 = buf.feed(b2[20:])
+    assert len(out1) == 1
+    assert out1[0][0].domain_size == 1
+    assert len(out2) == 1
+    assert out2[0][0].domain_size == 2
+
+
+def test_mace4_portable_chunked_not_parsed_by_buffer() -> None:
+    portable = "[ [ 4, [], [ [ \"function\", \"f\", 1, [0, 1, 2, 3] ] ] ] ]"
+    buf = Mace4InterpretationBuffer()
+    assert buf.feed(portable[:20]) == []
+    assert buf.feed(portable[20:]) == []
+    full = parse_mace4_output(portable)
+    assert len(full.portable_lists) == 1
 
 
 def test_pipeline_helpers() -> None:

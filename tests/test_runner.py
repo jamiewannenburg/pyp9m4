@@ -70,6 +70,24 @@ async def test_run_cancel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_events_on_complete() -> None:
+    r = AsyncToolRunner()
+    inv = SubprocessInvocation(argv=_py("print('ok')"))
+    seen: list[ToolRunResult] = []
+
+    async def on_complete(res: ToolRunResult) -> None:
+        seen.append(res)
+
+    out: list[object] = []
+    async for ev in r.stream_events(inv, on_complete=on_complete):
+        out.append(ev)
+
+    assert len(seen) == 1
+    assert seen[0].status == RunStatus.SUCCEEDED
+    assert StdoutLine("ok") in out
+
+
+@pytest.mark.asyncio
 async def test_stream_events_lines_and_parse_hook() -> None:
     r = AsyncToolRunner()
     code = (

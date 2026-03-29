@@ -9,8 +9,12 @@ from dataclasses import dataclass
 from pyp9m4.parsers.common import ParseWarning, split_ladr_section_blocks
 
 
-def _closing_paren_index(s: str, open_paren_idx: int) -> int:
-    """Index of the ``)`` matching ``(`` at ``open_paren_idx`` (nested-aware)."""
+_INTERP_NEEDLE = "interpretation("
+_LEN_INTERP_BEFORE_LPAREN = len("interpretation")
+
+
+def _matching_close_paren(s: str, open_paren_idx: int) -> int | None:
+    """Index of the ``)`` matching ``(`` at ``open_paren_idx``, or ``None`` if EOF leaves unclosed parens."""
     assert s[open_paren_idx] == "("
     depth = 0
     i = open_paren_idx
@@ -23,25 +27,39 @@ def _closing_paren_index(s: str, open_paren_idx: int) -> int:
             if depth == 0:
                 return i
         i += 1
-    return len(s) - 1
+    return None
+
+
+def _try_extract_next_interpretation(s: str, pos: int = 0) -> tuple[str, int] | None:
+    """Next complete ``interpretation(...)`` starting at or after ``pos``, or ``None`` if none is complete yet."""
+    while True:
+        i = s.find(_INTERP_NEEDLE, pos)
+        if i < 0:
+            return None
+        open_paren = i + _LEN_INTERP_BEFORE_LPAREN
+        if open_paren >= len(s) or s[open_paren] != "(":
+            pos = i + 1
+            continue
+        close = _matching_close_paren(s, open_paren)
+        if close is None:
+            return None
+        return (s[i : close + 1], close + 1)
 
 
 def extract_interpretation_blocks(text: str) -> tuple[str, ...]:
-    """Return each ``interpretation(...)`` substring (outermost parentheses)."""
-    needle = "interpretation("
+    """Return each complete ``interpretation(...)`` substring (outermost parentheses).
+
+    Only balanced blocks are returned; a trailing incomplete ``interpretation(``… is ignored
+    until closed (e.g. when using :class:`Mace4InterpretationBuffer` across chunks).
+    """
     out: list[str] = []
     pos = 0
     while True:
-        i = text.find(needle, pos)
-        if i < 0:
+        got = _try_extract_next_interpretation(text, pos)
+        if got is None:
             break
-        open_paren = i + len("interpretation")
-        if open_paren >= len(text) or text[open_paren] != "(":
-            pos = i + 1
-            continue
-        close = _closing_paren_index(text, open_paren)
-        out.append(text[i : close + 1])
-        pos = close + 1
+        block, pos = got
+        out.append(block)
     return tuple(out)
 
 
@@ -108,6 +126,57 @@ def _parse_standard_block(block: str) -> tuple[Mace4Interpretation, tuple[ParseW
     )
 
 
+class Mace4InterpretationBuffer:
+    """Buffer Mace4 stdout chunks and collect each complete ``interpretation(...)`` block.
+
+    Call :meth:`feed` with successive fragments (e.g. from ``asyncio`` stream reads). Whenever
+    a block's closing parenthesis arrives, the block is parsed with the same rules as
+    :func:`parse_mace4_output`, so :class:`Mace4Interpretation` rows match batch parsing.
+
+    **Portable format:** portable output is a single top-level ``[...]`` literal meant to be
+    parsed with :func:`ast.literal_eval` on the **full** document. Incremental feeds cannot
+    reliably detect or parse that form until EOF. For portable models, accumulate the full
+    stdout string (or use :func:`parse_mace4_output` once at process exit). This buffer only
+    extracts standard ``interpretation(...)`` structures incrementally.
+
+    **Early break / cancel:** if you stop reading before the process ends, :attr:`buffered_tail`
+    may hold an incomplete ``interpretation(``… fragment; discard the buffer or ignore it.
+    """
+
+    __slots__ = ("_buf",)
+
+    def __init__(self) -> None:
+        self._buf = ""
+
+    def feed(self, chunk: str) -> list[tuple[Mace4Interpretation, tuple[ParseWarning, ...]]]:
+        """Append ``chunk`` and return newly completed interpretations (oldest first)."""
+        if not chunk:
+            return []
+        self._buf += chunk
+        out: list[tuple[Mace4Interpretation, tuple[ParseWarning, ...]]] = []
+        pos = 0
+        while True:
+            got = _try_extract_next_interpretation(self._buf, pos)
+            if got is None:
+                break
+            block, end = got
+            mi, w = _parse_standard_block(block)
+            out.append((mi, w))
+            pos = end
+        if pos > 0:
+            self._buf = self._buf[pos:]
+        return out
+
+    def reset(self) -> None:
+        """Clear the internal buffer."""
+        self._buf = ""
+
+    @property
+    def buffered_tail(self) -> str:
+        """Text not yet part of a complete ``interpretation(...)`` (preamble or incomplete tail)."""
+        return self._buf
+
+
 def _try_parse_portable(text: str) -> tuple[tuple[object, ...], tuple[ParseWarning, ...]]:
     """If ``text`` looks like a portable-format Python list, parse with :func:`ast.literal_eval`."""
     warnings: list[ParseWarning] = []
@@ -127,7 +196,16 @@ def _try_parse_portable(text: str) -> tuple[tuple[object, ...], tuple[ParseWarni
 def parse_mace4_output(text: str) -> Mace4Parsed:
     """Parse Mace4 text: LADR section blocks, ``interpretation`` structures, optional portable list.
 
-    Portable format (whole file a nested list) is detected when the trimmed text starts with ``[``.
+    For **streaming** standard-structure output, use :class:`Mace4InterpretationBuffer` so each
+    complete ``interpretation(...)`` is parsed as it arrives; that path reuses the same block
+    parser as this function.
+
+    **Portable format** (whole file a nested list) is detected when trimmed text starts with
+    ``[``. It is evaluated only on the **entire** string passed here — not incrementally — so
+    callers using portable mode should buffer full stdout (or pipe to a string) before
+    calling. Standard ``interpretation(...)`` blocks in the same run are still extracted when
+    present.
+
     Standard assignments are best-effort regex lines ``function = …`` / ``relation = …``.
     """
     sections, sec_warn = split_ladr_section_blocks(text)

@@ -3,6 +3,7 @@
 from pyp9m4.parsers.common import ParseWarning, match_section_title_line, parse_equals_key_values, split_ladr_section_blocks
 from pyp9m4.parsers.mace4 import (
     Mace4Interpretation,
+    Mace4InterpretationBuffer,
     Mace4Parsed,
     StandardAssignment,
     extract_interpretation_blocks,
@@ -18,6 +19,7 @@ from pyp9m4.parsers.prover9 import ProofSegment, Prover9Parsed, parse_prover9_ou
 
 __all__ = [
     "Mace4Interpretation",
+    "Mace4InterpretationBuffer",
     "Mace4Parsed",
     "ParseWarning",
     "PipelineTextInspection",

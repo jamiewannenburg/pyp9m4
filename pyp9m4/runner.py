@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import enum
+import inspect
 import os
 import sys
 import time
@@ -138,11 +139,16 @@ class AsyncToolRunner:
         inv: SubprocessInvocation,
         *,
         parse_hook: Callable[[Any], AsyncIterator[Any]] | None = None,
+        on_complete: Callable[[ToolRunResult], Awaitable[None] | None] | None = None,
     ) -> AsyncIterator[Any]:
         """Yield layer-A line events (and optional layer-B events from ``parse_hook``).
 
         For each layer-A chunk ``e``, when ``parse_hook`` is set, the runner also yields
         everything produced by ``async for x in parse_hook(e): ...``.
+
+        If ``on_complete`` is set, it is invoked with the :class:`ToolRunResult` after the
+        subprocess finishes and before the stream sentinel is queued (awaited if it returns
+        a coroutine).
         """
         queue: asyncio.Queue[Any] = asyncio.Queue()
         sentinel = object()
@@ -160,10 +166,18 @@ class AsyncToolRunner:
             await emit_layer_a(StderrLine(line))
 
         async def runner_coro() -> ToolRunResult:
+            res: ToolRunResult | None = None
             try:
-                return await self._execute(inv, line_handlers=(on_out, on_err))
+                res = await self._execute(inv, line_handlers=(on_out, on_err))
+                return res
             finally:
-                await queue.put(sentinel)
+                try:
+                    if res is not None and on_complete is not None:
+                        oc = on_complete(res)
+                        if inspect.isawaitable(oc):
+                            await oc
+                finally:
+                    await queue.put(sentinel)
 
         task = asyncio.create_task(runner_coro())
         try:

@@ -22,6 +22,8 @@ from pyp9m4.runner import (
     run_sync,
     stream_events_sync,
 )
+from pyp9m4.jobs import JobLifecycle, Mace4JobStatusSnapshot
+from pyp9m4.mace4_facade import Mace4, Mace4SearchHandle
 from pyp9m4.parsers import (
     ParseWarning,
     inspect_pipeline_text,
@@ -33,10 +35,14 @@ from pyp9m4.parsers import (
 __all__ = [
     "AsyncToolRunner",
     "BINARIES_VERSION",
+    "JobLifecycle",
     "BinaryResolver",
     "BinaryResolverError",
     "CachedBinariesError",
     "ChecksumMismatchError",
+    "Mace4",
+    "Mace4JobStatusSnapshot",
+    "Mace4SearchHandle",
     "RunStatus",
     "StderrLine",
     "StdoutLine",

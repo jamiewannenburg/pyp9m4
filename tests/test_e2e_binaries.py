@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from pyp9m4 import Mace4
 from pyp9m4.parsers import parse_prover9_output
 from pyp9m4.parsers.mace4 import extract_interpretation_blocks, parse_mace4_output
 from pyp9m4.resolver import BinaryResolver
@@ -68,6 +69,39 @@ def test_e2e_interpformat_portable_from_mace4(resolver: BinaryResolver) -> None:
     assert r2.status == RunStatus.SUCCEEDED
     assert r2.exit_code == 0
     assert "[" in r2.stdout and "]" in r2.stdout
+
+
+@pytest.mark.integration
+def test_e2e_mace4_facade_models(resolver: BinaryResolver) -> None:
+    text = (_CORPUS / "mace4_sat.in").read_text(encoding="utf-8")
+    m4 = Mace4(resolver=resolver, domain_size=2, timeout_s=120)
+    models = list(m4.models(text))
+    assert len(models) >= 1
+    assert models[0].domain_size == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_e2e_mace4_start_amodels_status(resolver: BinaryResolver) -> None:
+    text = (_CORPUS / "mace4_sat.in").read_text(encoding="utf-8")
+    m4 = Mace4(resolver=resolver, domain_size=2, timeout_s=120)
+    handle = m4.start_amodels(text)
+    snap0 = await handle.status()
+    assert snap0.lifecycle in ("pending", "running", "succeeded")
+    await handle.wait()
+    final = await handle.status()
+    assert final.lifecycle == "succeeded"
+    assert final.models_found >= 1
+    got = [m async for m in handle.amodels()]
+    assert len(got) >= 1
+
+
+@pytest.mark.integration
+def test_e2e_mace4_facade_eliminate_isomorphic(resolver: BinaryResolver) -> None:
+    text = (_CORPUS / "mace4_sat.in").read_text(encoding="utf-8")
+    m4 = Mace4(resolver=resolver, domain_size=2, timeout_s=120)
+    models = list(m4.models(text, eliminate_isomorphic=True))
+    assert isinstance(models, list)
 
 
 @pytest.mark.integration
