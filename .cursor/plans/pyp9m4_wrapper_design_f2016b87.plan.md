@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: async-runner
     content: "AsyncToolRunner: asyncio subprocess, timeouts, cancellation, dual-layer streaming, Result + Status types"
-    status: pending
+    status: completed
   - id: sync-shims
     content: Thin sync wrappers over async API for scripts/notebooks
     status: pending
