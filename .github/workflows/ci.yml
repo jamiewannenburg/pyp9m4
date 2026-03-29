@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install package (dev)
-        run: pip install -e ".[dev]"
+      - name: Install package (dev + bridge extras)
+        run: pip install -e ".[dev,smt]"
       - name: Tests
         run: pytest -q --tb=short

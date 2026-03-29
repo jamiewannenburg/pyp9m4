@@ -16,6 +16,11 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
 ]
+# Placeholder for future optional TPTP tooling (stdlib bridge lives in ``pyp9m4.bridge.tptp``).
+tptp = []
+smt = [
+    "pysmt>=0.9.5",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["pyp9m4"]

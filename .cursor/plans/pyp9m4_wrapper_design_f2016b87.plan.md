@@ -19,7 +19,7 @@ todos:
     status: completed
   - id: bridges-extras
     content: Optional extras and TPTP/SMT-LIB bridge helpers (no heavy hard deps in core)
-    status: pending
+    status: completed
   - id: ci-e2e
     content: CI matrix with real release binaries and small e2e corpus
     status: pending
