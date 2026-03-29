@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from pyp9m4 import Mace4
+from pyp9m4 import Mace4, Prover9
+from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers import parse_prover9_output
 from pyp9m4.parsers.mace4 import extract_interpretation_blocks, parse_mace4_output
 from pyp9m4.resolver import BinaryResolver
@@ -69,6 +70,18 @@ def test_e2e_interpformat_portable_from_mace4(resolver: BinaryResolver) -> None:
     assert r2.status == RunStatus.SUCCEEDED
     assert r2.exit_code == 0
     assert "[" in r2.stdout and "]" in r2.stdout
+
+
+@pytest.mark.integration
+def test_e2e_prover9_facade_run(resolver: BinaryResolver) -> None:
+    """Smoke: high-level Prover9.run against resolved prover9 binary."""
+    inp = _CORPUS / "trivial.in"
+    p9 = Prover9(resolver=resolver, timeout_s=120)
+    result = p9.run(options=Prover9CliOptions(input_files=(str(inp),)))
+    assert result.lifecycle == "succeeded"
+    assert result.exit_code == 0
+    assert "THEOREM PROVED" in result.stdout
+    assert result.parsed.statistics.get("proofs") == "1"
 
 
 @pytest.mark.integration

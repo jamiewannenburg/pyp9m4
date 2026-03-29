@@ -64,6 +64,41 @@ def test_job_status_snapshot_to_json_dict_rejects_non_dataclass() -> None:
         job_status_snapshot_to_json_dict("x")  # type: ignore[arg-type]
 
 
+def test_job_status_snapshot_json_large_stderr_tail_roundtrip_keys() -> None:
+    """Snapshots may carry long tails; JSON dict uses plain strings (no truncation here)."""
+    long_err = "e" * 5000
+    p = Prover9JobStatusSnapshot(
+        lifecycle="failed",
+        exit_code=1,
+        stderr_tail=long_err,
+        argv=("prover9", "-f", "x.in"),
+        duration_s=0.5,
+    )
+    d = job_status_snapshot_to_json_dict(p)
+    assert len(d["stderr_tail"]) == 5000
+    assert d["exit_code"] == 1
+    assert d["argv"] == ["prover9", "-f", "x.in"]
+
+
+def test_mace4_job_status_snapshot_json_none_optional_fields() -> None:
+    m = Mace4JobStatusSnapshot(
+        lifecycle="pending",
+        models_found=0,
+        last_domain_size=None,
+        current_size_range=None,
+        exit_code=None,
+        stderr_tail="",
+        argv=(),
+        domain_increment=None,
+        duration_s=None,
+    )
+    d = job_status_snapshot_to_json_dict(m)
+    assert d["last_domain_size"] is None
+    assert d["current_size_range"] is None
+    assert d["domain_increment"] is None
+    assert d["duration_s"] is None
+
+
 def test_runtime_checkable_protocols_match_minimal_handles() -> None:
     """Avoid spawning binaries; only verify structural typing for web/registry use."""
 

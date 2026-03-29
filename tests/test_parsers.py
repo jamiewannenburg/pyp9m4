@@ -150,3 +150,73 @@ def test_pipeline_helpers() -> None:
     assert ins.looks_like_error is False
     ins2 = inspect_pipeline_text("", "Fatal: bad\n")
     assert ins2.looks_like_error is True
+
+
+def test_pipeline_smoke_prooftrans_like_stdout() -> None:
+    """Smoke: pipeline-style tool output with section markers and percent comments."""
+    stdout = """% prooftrans output
+============================== PROOF =================================
+ 1 x = x.
+============================== end of proof ==========================
+"""
+    r = parse_pipeline_tool_output(stdout, "")
+    ins = inspect_pipeline_text(r.stdout, r.stderr)
+    assert any("prooftrans" in c.lower() for c in ins.percent_comments)
+    assert "PROOF" in r.stdout
+    assert not ins.looks_like_error
+
+
+def test_mace4_interpretation_buffer_reset_drops_partial() -> None:
+    sample = """
+interpretation( 2, [
+   function = c1 = 0,
+]).
+"""
+    buf = Mace4InterpretationBuffer()
+    buf.feed(sample[:30])
+    assert extract_interpretation_blocks(buf.buffered_tail) == ()
+    buf.reset()
+    assert buf.buffered_tail == ""
+    out = buf.feed(sample)
+    assert len(out) == 1
+    assert out[0][0].domain_size == 2
+
+
+def test_mace4_interpretation_buffer_character_by_character() -> None:
+    block = "interpretation( 1, [\n   function = c1 = 0,\n])."
+    buf = Mace4InterpretationBuffer()
+    completed: list = []
+    for ch in block:
+        completed.extend(buf.feed(ch))
+    assert len(completed) == 1
+    assert completed[0][0].domain_size == 1
+
+
+def test_mace4_interpretation_buffer_nested_parens_in_assignments() -> None:
+    """Balanced-paren scan must tolerate parentheses inside the interpretation body."""
+    sample = """
+interpretation( 2, [
+   function = f(0) = 1,
+   relation = R(1,(0)) = 1,
+]).
+"""
+    buf = Mace4InterpretationBuffer()
+    mid = sample.index("R(1,(0))")
+    a = buf.feed(sample[: mid + 4])
+    b = buf.feed(sample[mid + 4 :])
+    assert a == []
+    assert len(b) == 1
+    assert b[0][0].domain_size == 2
+
+
+def test_mace4_interpretation_buffer_warns_when_domain_not_numeric() -> None:
+    buf = Mace4InterpretationBuffer()
+    bad = """
+interpretation( x, [
+   function = c1 = 0,
+]).
+"""
+    out = buf.feed(bad)
+    assert len(out) == 1
+    _mi, warns = out[0]
+    assert any(w.message == "domain_size_not_found" for w in warns)
