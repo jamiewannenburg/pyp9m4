@@ -76,11 +76,13 @@ class _Mace4JobState:
     exit_code: int | None = None
     stderr_lines: list[str] = field(default_factory=list)
     argv: tuple[str, ...] = ()
+    duration_s: float | None = None
 
     def snapshot(
         self,
         *,
         size_range: tuple[int | None, int | None] | None,
+        domain_increment: int | None,
     ) -> Mace4JobStatusSnapshot:
         tail = _stderr_tail("\n".join(self.stderr_lines))
         return Mace4JobStatusSnapshot(
@@ -91,13 +93,23 @@ class _Mace4JobState:
             exit_code=self.exit_code,
             stderr_tail=tail,
             argv=self.argv,
+            domain_increment=domain_increment,
+            duration_s=self.duration_s,
         )
 
 
 class Mace4SearchHandle:
     """Background Mace4 search; poll with :meth:`status` on the same event loop that started it."""
 
-    __slots__ = ("_argv", "_model_queue", "_result_event", "_runner_task", "_size_range", "_state")
+    __slots__ = (
+        "_argv",
+        "_domain_increment",
+        "_model_queue",
+        "_result_event",
+        "_runner_task",
+        "_size_range",
+        "_state",
+    )
 
     def __init__(
         self,
@@ -108,6 +120,7 @@ class Mace4SearchHandle:
         result_event: asyncio.Event,
         argv: tuple[str, ...],
         size_range: tuple[int | None, int | None] | None,
+        domain_increment: int | None,
     ) -> None:
         self._runner_task = runner_task
         self._state = state
@@ -115,13 +128,17 @@ class Mace4SearchHandle:
         self._result_event = result_event
         self._argv = argv
         self._size_range = size_range
+        self._domain_increment = domain_increment
 
     @property
     def argv(self) -> tuple[str, ...]:
         return self._argv
 
     async def status(self) -> Mace4JobStatusSnapshot:
-        return self._state.snapshot(size_range=self._size_range)
+        return self._state.snapshot(
+            size_range=self._size_range,
+            domain_increment=self._domain_increment,
+        )
 
     async def wait(self) -> None:
         await self._result_event.wait()
@@ -463,6 +480,7 @@ class Mace4:
         mace4_self = self
 
         async def _run() -> None:
+            t0 = time.perf_counter()
             state.lifecycle = "running"
             try:
                 if elim:
@@ -514,6 +532,7 @@ class Mace4:
                 state.lifecycle = "cancelled"
                 raise
             finally:
+                state.duration_s = time.perf_counter() - t0
                 await queue.put(None)
                 done_event.set()
 
@@ -525,4 +544,5 @@ class Mace4:
             result_event=done_event,
             argv=argv,
             size_range=size_range,
+            domain_increment=opts.increment,
         )

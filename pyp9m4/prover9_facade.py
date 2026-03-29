@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
@@ -79,6 +80,7 @@ class _Prover9JobState:
     stderr_lines: list[str] = field(default_factory=list)
     argv: tuple[str, ...] = ()
     result: Prover9ProofResult | None = None
+    duration_s: float | None = None
 
     def snapshot(self) -> Prover9JobStatusSnapshot:
         tail = _stderr_tail("\n".join(self.stderr_lines))
@@ -87,6 +89,7 @@ class _Prover9JobState:
             exit_code=self.exit_code,
             stderr_tail=tail,
             argv=self.argv,
+            duration_s=self.duration_s,
         )
 
 
@@ -261,6 +264,7 @@ class Prover9:
         facade_self = self
 
         async def _run() -> None:
+            t0 = time.perf_counter()
             state.lifecycle = "running"
             try:
                 res = await AsyncToolRunner().run(inv)
@@ -282,6 +286,7 @@ class Prover9:
                     )
                 # Completing normally lets :meth:`wait` / :meth:`result` observe cancellation.
             finally:
+                state.duration_s = time.perf_counter() - t0
                 done_event.set()
 
         task = asyncio.create_task(_run())
