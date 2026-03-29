@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: ci-e2e
     content: CI matrix with real release binaries and small e2e corpus
-    status: pending
+    status: completed
 isProject: false
 ---
 

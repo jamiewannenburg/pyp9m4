@@ -1,0 +1,9 @@
+set(auto).
+
+formulas(assumptions).
+  p.
+end_of_list.
+
+formulas(goals).
+  p.
+end_of_list.

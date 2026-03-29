@@ -1,0 +1,3 @@
+formulas(sos).
+  P(a).
+end_of_list.
