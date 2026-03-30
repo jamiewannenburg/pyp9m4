@@ -111,6 +111,41 @@ interpretation( 2, [
     assert mi.holds("R", 1, 0) is True
 
 
+def test_mace4_interpretation_list_style_function_and_relation() -> None:
+    sample = """
+interpretation( 2, [number=1, seconds=0], [
+        function(a, [ 0 ]),
+        relation(P(_), [ 1, 0 ])
+]).
+"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    assert mi.domain_size == 2
+    assert mi.functions == {"a": 0}
+    assert mi.relations == {"P": 1}
+    assert mi.value_at("a") == 0
+    assert mi.holds("P", 0) is True
+    assert mi.holds("P", 1) is False
+
+
+def test_mace4_interpretation_list_style_binary_relation() -> None:
+    sample = """
+interpretation( 3, [number=1], [
+        function(f, [ 0, 1, 2 ]),
+        relation(R(_,_), [1,0,0, 0,1,0, 0,0,1])
+]).
+"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    assert mi.domain_size == 3
+    assert mi.functions == {"f": 1}
+    assert mi.relations == {"R": 2}
+    assert mi.value_at("f", 0) == 0
+    assert mi.value_at("f", 2) == 2
+    assert mi.holds("R", 0, 0) is True
+    assert mi.holds("R", 1, 1) is True
+    assert mi.holds("R", 2, 2) is True
+    assert mi.holds("R", 0, 1) is False
+
+
 def test_mace4_interpretation_key_errors() -> None:
     sample = """
 interpretation( 2, [

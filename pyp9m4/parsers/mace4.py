@@ -7,6 +7,7 @@ import html
 import os
 import re
 import tempfile
+from itertools import product
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -228,6 +229,236 @@ def _build_interpretation_tables(
         tuple(rel_rows),
         fn_ar_t,
         rel_ar_t,
+        tuple(warns),
+    )
+
+
+def _split_top_level_commas(s: str) -> list[str]:
+    """Split on commas not inside (), or [].
+
+    Used for parsing list-style Mace4 terms like:
+    - function(sym, [0,1,...])
+    - relation(P(_,_), [1,0,...])
+    """
+    parts: list[str] = []
+    paren_depth = 0
+    bracket_depth = 0
+    start = 0
+    for i, c in enumerate(s):
+        if c == "(":
+            paren_depth += 1
+        elif c == ")":
+            paren_depth -= 1
+        elif c == "[":
+            bracket_depth += 1
+        elif c == "]":
+            bracket_depth -= 1
+        elif c == "," and paren_depth == 0 and bracket_depth == 0:
+            parts.append(s[start:i].strip())
+            start = i + 1
+    parts.append(s[start:].strip())
+    return [p for p in parts if p]
+
+
+_INT_RE = re.compile(r"-?\d+")
+
+
+def _parse_int_list(list_s: str) -> list[int] | None:
+    s = list_s.strip()
+    if not (s.startswith("[") and s.endswith("]")):
+        return None
+    inner = s[1:-1].strip()
+    return [int(x) for x in _INT_RE.findall(inner)]
+
+
+def _extract_function_and_relation_terms(block: str, keyword: str) -> list[str]:
+    """Extract top-level `keyword(...)` terms from a balanced `interpretation(...)` block."""
+    out: list[str] = []
+    # The keyword may have spaces before the '('.
+    pat = re.compile(rf"\b{re.escape(keyword)}\s*\(")
+    for m in pat.finditer(block):
+        open_paren_idx = m.end() - 1
+        close = _matching_close_paren(block, open_paren_idx)
+        if close is None:
+            continue
+        out.append(block[m.start() : close + 1])
+    return out
+
+
+def _infer_arity_from_list_len(domain_size: int, values_len: int) -> int | None:
+    """Infer arity `k` where `domain_size**k == values_len`."""
+    if values_len == 1:
+        return 0
+    if domain_size <= 0:
+        return None
+    p = 1
+    k = 0
+    while p < values_len:
+        p *= domain_size
+        k += 1
+        if k > 6:  # keep this parse bounded for weird data
+            break
+    return k if p == values_len else None
+
+
+def _build_tables_from_list_style(
+    block: str,
+    *,
+    domain_size: int | None,
+) -> tuple[
+    tuple[tuple[str, tuple[int, ...], int], ...],
+    tuple[tuple[str, tuple[int, ...], bool], ...],
+    tuple[ParseWarning, ...],
+]:
+    """Parse list-style Mace4 model output into the same table shapes.
+
+    Supported shapes:
+    - `function(sym, [v0, v1, ...])`
+    - `relation(P(_,_), [b0, b1, ...])`
+    """
+    warns: list[ParseWarning] = []
+    fn_map: dict[tuple[str, tuple[int, ...]], int] = {}
+    fn_arity: dict[str, int] = {}
+    rel_map: dict[tuple[str, tuple[int, ...]], bool] = {}
+    rel_arity: dict[str, int] = {}
+
+    # function(sym, [..])
+    for term in _extract_function_and_relation_terms(block, "function"):
+        open_i = term.find("(")
+        inner = term[open_i + 1 : -1].strip()
+        parts = _split_top_level_commas(inner)
+        if len(parts) != 2:
+            warns.append(ParseWarning("function_term_parse_failed", f"could not split {term!r}"))
+            continue
+        sym = parts[0].strip()
+        vals = _parse_int_list(parts[1])
+        if vals is None:
+            warns.append(ParseWarning("function_values_parse_failed", f"could not parse list in {term!r}"))
+            continue
+
+        if domain_size is None:
+            if len(vals) == 1:
+                arity = 0
+            else:
+                warns.append(
+                    ParseWarning(
+                        "function_arity_infer_failed",
+                        f"domain_size missing; cannot infer arity for {sym!r} (len={len(vals)})",
+                    )
+                )
+                continue
+        else:
+            arity = _infer_arity_from_list_len(domain_size, len(vals))
+            if arity is None:
+                warns.append(
+                    ParseWarning(
+                        "function_arity_infer_failed",
+                        f"cannot infer arity for {sym!r} with domain_size={domain_size} and len(values)={len(vals)}",
+                    )
+                )
+                continue
+
+        if arity == 0:
+            key = (sym, ())
+            fn_map[key] = vals[0]
+            prev = fn_arity.get(sym)
+            if prev is not None and prev != 0:
+                warns.append(
+                    ParseWarning(
+                        "function_arity_mismatch",
+                        f"function {sym!r}: arity {prev} vs 0",
+                    )
+                )
+            fn_arity[sym] = 0
+            continue
+
+        d = domain_size
+        expected = d**arity
+        if len(vals) != expected:
+            warns.append(
+                ParseWarning(
+                    "function_values_length_mismatch",
+                    f"function {sym!r}: expected {expected} values for arity {arity} but got {len(vals)}",
+                )
+            )
+            continue
+
+        for idx, args in enumerate(product(range(d), repeat=arity)):
+            fn_map[(sym, args)] = vals[idx]
+        fn_arity[sym] = arity
+
+    # relation(P(_,_), [..])
+    for term in _extract_function_and_relation_terms(block, "relation"):
+        open_i = term.find("(")
+        inner = term[open_i + 1 : -1].strip()
+        parts = _split_top_level_commas(inner)
+        if len(parts) != 2:
+            warns.append(ParseWarning("relation_term_parse_failed", f"could not split {term!r}"))
+            continue
+        template = parts[0].strip()
+        vals = _parse_int_list(parts[1])
+        if vals is None:
+            warns.append(ParseWarning("relation_values_parse_failed", f"could not parse list in {term!r}"))
+            continue
+
+        # Parse template: `P(_)`, `P(_,_ )`, etc.
+        tpl_open = template.find("(")
+        if tpl_open < 0:
+            rel_name = template
+            rel_k = 0
+        else:
+            rel_name = template[:tpl_open].strip()
+            tpl_inner = template[tpl_open + 1 : -1].strip()
+            if not tpl_inner:
+                rel_k = 0
+            else:
+                toks = [t.strip() for t in tpl_inner.split(",") if t.strip()]
+                rel_k = len(toks)
+                if any(t != "_" for t in toks):
+                    warns.append(
+                        ParseWarning(
+                            "relation_template_unexpected",
+                            f"expected '_' placeholders in {template!r} but got {toks!r}",
+                        )
+                    )
+
+        if domain_size is None:
+            warns.append(
+                ParseWarning(
+                    "relation_arity_infer_failed",
+                    f"domain_size missing; cannot infer relation {rel_name!r} entries",
+                )
+            )
+            continue
+
+        d = domain_size
+        expected = d**rel_k
+        if len(vals) != expected:
+            warns.append(
+                ParseWarning(
+                    "relation_values_length_mismatch",
+                    f"relation {rel_name!r}: expected {expected} values for arity {rel_k} but got {len(vals)}",
+                )
+            )
+            continue
+
+        if rel_k == 0:
+            rel_map[(rel_name, ())] = vals[0] != 0
+            rel_arity[rel_name] = 0
+            continue
+
+        for idx, args in enumerate(product(range(d), repeat=rel_k)):
+            rel_map[(rel_name, args)] = vals[idx] != 0
+        rel_arity[rel_name] = rel_k
+
+    fn_entries = sorted(((n, args, v) for (n, args), v in fn_map.items()), key=lambda x: (x[0], x[1]))
+    rel_entries = sorted(((n, args, v) for (n, args), v in rel_map.items()), key=lambda x: (x[0], x[1]))
+    fn_ar_t = tuple(sorted(fn_arity.items()))
+    rel_ar_t = tuple(sorted(rel_arity.items()))
+
+    return (
+        tuple(fn_entries),
+        tuple(rel_entries),
         tuple(warns),
     )
 
@@ -648,6 +879,48 @@ def _parse_standard_block(block: str) -> tuple[Mace4Interpretation, tuple[ParseW
     assign_t = tuple(assigns)
     fn_e, rel_e, fn_a, rel_a, tab_warns = _build_interpretation_tables(assign_t)
     warnings.extend(tab_warns)
+
+    # Mace4 newer output style uses `function(sym, [values])` and
+    # `relation(P(_,...), [values])` inside the interpretation body.
+    fn_l, rel_l, list_style_warns = _build_tables_from_list_style(block, domain_size=domain)
+    warnings.extend(list_style_warns)
+
+    # Merge both sources into a single set of entries/arities.
+    fn_map: dict[tuple[str, tuple[int, ...]], int] = {(n, a): v for n, a, v in fn_e}
+    rel_map: dict[tuple[str, tuple[int, ...]], bool] = {(n, a): v for n, a, v in rel_e}
+    fn_arity: dict[str, int] = {n: a for n, a in fn_a}
+    rel_arity: dict[str, int] = {n: a for n, a in rel_a}
+
+    for n, args, v in fn_l:
+        ar = len(args)
+        prev = fn_arity.get(n)
+        if prev is not None and prev != ar:
+            warnings.append(
+                ParseWarning(
+                    "function_arity_mismatch",
+                    f"function {n!r}: arity {prev} vs {ar} (from list-style output)",
+                )
+            )
+        fn_arity[n] = ar
+        fn_map[(n, args)] = v
+
+    for n, args, v in rel_l:
+        ar = len(args)
+        prev = rel_arity.get(n)
+        if prev is not None and prev != ar:
+            warnings.append(
+                ParseWarning(
+                    "relation_arity_mismatch",
+                    f"relation {n!r}: arity {prev} vs {ar} (from list-style output)",
+                )
+            )
+        rel_arity[n] = ar
+        rel_map[(n, args)] = v
+
+    fn_ar_t = tuple(sorted(fn_arity.items()))
+    rel_ar_t = tuple(sorted(rel_arity.items()))
+    fn_e = tuple(sorted(((n, a, v) for (n, a), v in fn_map.items()), key=lambda x: (x[0], x[1])))
+    rel_e = tuple(sorted(((n, a, v) for (n, a), v in rel_map.items()), key=lambda x: (x[0], x[1])))
     return (
         Mace4Interpretation(
             raw=block,
@@ -655,8 +928,8 @@ def _parse_standard_block(block: str) -> tuple[Mace4Interpretation, tuple[ParseW
             standard_assignments=assign_t,
             function_entries=fn_e,
             relation_entries=rel_e,
-            function_arities=fn_a,
-            relation_arities=rel_a,
+            function_arities=fn_ar_t,
+            relation_arities=rel_ar_t,
         ),
         tuple(warnings),
     )
