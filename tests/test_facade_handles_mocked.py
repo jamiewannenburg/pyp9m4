@@ -8,6 +8,7 @@ import pytest
 
 from pyp9m4.mace4_facade import Mace4
 from pyp9m4.options.mace4 import Mace4CliOptions
+from pyp9m4.parsers.prover9_outcome import ProverOutcome
 from pyp9m4.prover9_facade import Prover9
 from pyp9m4.resolver import BinaryResolver
 from pyp9m4.runner import AsyncToolRunner, RunStatus, StdoutLine, ToolRunResult
@@ -34,6 +35,7 @@ async def test_prover9_proof_handle_status_transitions_success(monkeypatch: pyte
     result = await handle.result()
     assert result.lifecycle == "succeeded"
     assert result.exit_code == 0
+    assert result.outcome == ProverOutcome.proved
     assert "THEOREM PROVED" in result.stdout
 
     snap1 = await handle.status()
@@ -58,6 +60,8 @@ async def test_prover9_proof_handle_status_failed_run(monkeypatch: pytest.Monkey
     p = Prover9(resolver=BinaryResolver())
     handle = p.start_arun("bad")
     await handle.wait()
+    result = await handle.result()
+    assert result.outcome == ProverOutcome.error
     snap = await handle.status()
     assert snap.lifecycle == "failed"
     assert snap.exit_code == 2

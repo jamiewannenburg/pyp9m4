@@ -70,7 +70,7 @@ trivial = _E2E / "trivial.in"
 _t0 = perf_counter()
 proof = p9.run(trivial)
 print(f"prover9 run: {perf_counter() - _t0:.3f}s")
-proof.lifecycle, proof.exit_code, proof.parsed.statistics, len(proof.parsed.proof_segments)
+proof.lifecycle, proof.outcome, proof.exit_code, proof.parsed.statistics, len(proof.parsed.proof_segments)
 %time len(proof.stdout)
 
 # %%

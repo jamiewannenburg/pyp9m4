@@ -65,6 +65,21 @@ for model in m4.models(problem_text_or_path):  # first arg is ``input`` (str, by
 
 `Prover9.run` and `Mace4.models` use a helper that is safe from **Jupyter/IPython** when an event loop is already running.
 
+### Lifecycle vs semantic outcome vs aliases
+
+| | |
+|--|--|
+| `proof.lifecycle` | How the wrapper subprocess finished: `succeeded`, `failed`, `timed_out`, `cancelled`, etc. |
+| `proof.outcome` | Logical verdict from the Prover9 log (`ProverOutcome`): e.g. `proved`, `not_proved`, `unknown`, or `error` / `timed_out` / `cancelled` when the run did not succeed cleanly. |
+
+Use `from pyp9m4 import ProverOutcome, infer_prover_outcome` if you parse stdout yourself. For a succeeded run without a clear `THEOREM PROVED` line, `outcome` may be `unknown` until more exit phrases are classified.
+
+**Naming aliases (same behavior as the canonical methods):**
+
+- Prover9: `prove` / `aprove` / `start_aprove` delegate to `run` / `arun` / `start_arun`.
+- Mace4: `counterexamples` / `acounterexamples` / `start_acounterexamples` delegate to `models` / `amodels` / `start_amodels`.
+- `Mace4Interpretation`: `get_value` and `model_eval` delegate to `value_at` (SMT-style naming).
+
 ## Async: `arun`, `amodels`, and background jobs
 
 ```python

@@ -16,6 +16,7 @@ from pyp9m4.parsers.pipeline import (
     parse_pipeline_tool_output,
 )
 from pyp9m4.parsers.prover9 import ProofSegment, Prover9Parsed, parse_prover9_output
+from pyp9m4.parsers.prover9_outcome import ProverOutcome, infer_prover_outcome
 
 __all__ = [
     "Mace4Interpretation",
@@ -26,6 +27,8 @@ __all__ = [
     "PipelineTextResult",
     "ProofSegment",
     "Prover9Parsed",
+    "ProverOutcome",
+    "infer_prover_outcome",
     "StandardAssignment",
     "extract_interpretation_blocks",
     "inspect_pipeline_text",

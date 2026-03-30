@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from pyp9m4 import Mace4, Prover9
+from pyp9m4 import Mace4, Prover9, ProverOutcome
 from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers import parse_prover9_output
 from pyp9m4.parsers.mace4 import extract_interpretation_blocks, parse_mace4_output
@@ -80,6 +80,7 @@ def test_e2e_prover9_facade_run(resolver: BinaryResolver) -> None:
     result = p9.run(options=Prover9CliOptions(input_files=(str(inp),)))
     assert result.lifecycle == "succeeded"
     assert result.exit_code == 0
+    assert result.outcome == ProverOutcome.proved
     assert "THEOREM PROVED" in result.stdout
     assert result.parsed.statistics.get("proofs") == "1"
 

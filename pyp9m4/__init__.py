@@ -25,6 +25,7 @@ from pyp9m4.parsers import (
     parse_pipeline_tool_output,
     parse_prover9_output,
 )
+from pyp9m4.parsers.prover9_outcome import ProverOutcome, infer_prover_outcome
 from pyp9m4.prover9_facade import Prover9, Prover9ProofHandle, Prover9ProofResult
 from pyp9m4.resolver import (
     BINARIES_VERSION,
@@ -54,6 +55,8 @@ __all__ = [
     "Prover9",
     "Prover9ProofHandle",
     "Prover9ProofResult",
+    "ProverOutcome",
+    "infer_prover_outcome",
     "Mace4",
     "Mace4SearchHandle",
     # Job lifecycle and polling (e.g. web APIs)

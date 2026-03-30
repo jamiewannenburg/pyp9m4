@@ -13,6 +13,7 @@ from typing import Any
 from pyp9m4.jobs import JobLifecycle, Prover9JobStatusSnapshot
 from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers.prover9 import Prover9Parsed, parse_prover9_output
+from pyp9m4.parsers.prover9_outcome import ProverOutcome, infer_prover_outcome
 from pyp9m4.resolver import BinaryResolver
 from pyp9m4.runner import (
     AsyncToolRunner,
@@ -64,6 +65,8 @@ class Prover9ProofResult:
     """Outcome of :meth:`Prover9.run` / :meth:`Prover9.arun` / :meth:`Prover9ProofHandle.result`.
 
     :attr:`parsed` is the main value; :attr:`stdout` and :attr:`stderr` are attached for debugging.
+    :attr:`outcome` is the logical verdict (e.g. :attr:`~ProverOutcome.proved`); :attr:`lifecycle`
+    is how the subprocess finished—see README “Lifecycle vs outcome”.
     """
 
     parsed: Prover9Parsed
@@ -71,6 +74,7 @@ class Prover9ProofResult:
     stderr: str
     exit_code: int | None
     lifecycle: JobLifecycle
+    outcome: ProverOutcome
 
 
 @dataclass
@@ -136,6 +140,9 @@ class Prover9:
     **Precedence** (each call): call-time frequent kwargs beat ``options=`` (which replaces the
     instance baseline for that call). At construction, keyword arguments override the initial
     ``options=`` dataclass field-by-field.
+
+    **Aliases** (same behavior): :meth:`prove` / :meth:`aprove` / :meth:`start_aprove` delegate to
+    :meth:`run` / :meth:`arun` / :meth:`start_arun`.
     """
 
     __slots__ = (
@@ -218,12 +225,19 @@ class Prover9:
     def _proof_result_from_run(self, res: ToolRunResult) -> Prover9ProofResult:
         life = _run_status_to_lifecycle(res.status)
         parsed = parse_prover9_output(res.stdout)
+        outcome = infer_prover_outcome(
+            parsed,
+            lifecycle=life,
+            exit_code=res.exit_code,
+            stdout=res.stdout,
+        )
         return Prover9ProofResult(
             parsed=parsed,
             stdout=res.stdout,
             stderr=res.stderr,
             exit_code=res.exit_code,
             lifecycle=life,
+            outcome=outcome,
         )
 
     async def arun(
@@ -283,6 +297,7 @@ class Prover9:
                         stderr=tail,
                         exit_code=state.exit_code,
                         lifecycle="cancelled",
+                        outcome=ProverOutcome.cancelled,
                     )
                 # Completing normally lets :meth:`wait` / :meth:`result` observe cancellation.
             finally:
@@ -291,3 +306,33 @@ class Prover9:
 
         task = asyncio.create_task(_run())
         return Prover9ProofHandle(runner_task=task, state=state, result_event=done_event)
+
+    def prove(
+        self,
+        input: str | bytes | Path | None = None,
+        *,
+        options: Prover9CliOptions | None = None,
+        **kwargs: Any,
+    ) -> Prover9ProofResult:
+        """Alias of :meth:`run` — semantic name for a proof attempt (same types and behavior)."""
+        return self.run(input, options=options, **kwargs)
+
+    async def aprove(
+        self,
+        input: str | bytes | Path | None = None,
+        *,
+        options: Prover9CliOptions | None = None,
+        **kwargs: Any,
+    ) -> Prover9ProofResult:
+        """Alias of :meth:`arun` — async proof attempt."""
+        return await self.arun(input, options=options, **kwargs)
+
+    def start_aprove(
+        self,
+        input: str | bytes | Path | None = None,
+        *,
+        options: Prover9CliOptions | None = None,
+        **kwargs: Any,
+    ) -> Prover9ProofHandle:
+        """Alias of :meth:`start_arun` — background proof job."""
+        return self.start_arun(input, options=options, **kwargs)

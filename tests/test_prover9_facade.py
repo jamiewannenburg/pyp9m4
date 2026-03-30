@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from pyp9m4.options.prover9 import Prover9CliOptions
+from pyp9m4.parsers.prover9_outcome import ProverOutcome
 from pyp9m4.prover9_facade import Prover9
 from pyp9m4.resolver import BinaryResolver
 from pyp9m4.runner import AsyncToolRunner
@@ -38,6 +39,17 @@ def test_prover9_rejects_unknown_kwarg() -> None:
         Prover9(resolver=BinaryResolver(), not_a_prover9_field=1)  # type: ignore[call-arg]
 
 
+def test_prove_delegates_to_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinel = object()
+
+    def _fake_run(self: Prover9, *a: object, **k: object) -> object:  # noqa: ARG001
+        return sentinel
+
+    monkeypatch.setattr(Prover9, "run", _fake_run)
+    p = Prover9(resolver=BinaryResolver())
+    assert p.prove("input") is sentinel
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_prover9_start_arun_status_and_result() -> None:
@@ -52,6 +64,7 @@ async def test_prover9_start_arun_status_and_result() -> None:
     result = await handle.result()
     assert result.lifecycle == "succeeded"
     assert result.exit_code == 0
+    assert result.outcome == ProverOutcome.proved
     assert "THEOREM PROVED" in result.stdout
     assert result.parsed.statistics.get("proofs") == "1"
 
@@ -72,5 +85,6 @@ async def test_prover9_start_arun_cancel(monkeypatch: pytest.MonkeyPatch) -> Non
     handle.cancel()
     out = await handle.result()
     assert out.lifecycle == "cancelled"
+    assert out.outcome == ProverOutcome.cancelled
     snap = await handle.status()
     assert snap.lifecycle == "cancelled"

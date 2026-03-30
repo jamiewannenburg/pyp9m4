@@ -156,6 +156,11 @@ class Mace4SearchHandle:
                 break
             yield m
 
+    async def acounterexamples(self) -> AsyncIterator[Mace4Interpretation]:
+        """Alias of :meth:`amodels` (counterexample / finite-model wording)."""
+        async for m in self.amodels():
+            yield m
+
 
 class Mace4:
     """Mace4 with constructor defaults and per-call merged overrides.
@@ -166,6 +171,9 @@ class Mace4:
 
     With ``eliminate_isomorphic=True``, runs ``mace4`` → ``interpformat`` → ``isofilter``; models
     are yielded only after the pipeline finishes (no cross-tool streaming).
+
+    **Aliases** (same behavior): :meth:`counterexamples` / :meth:`acounterexamples` /
+    :meth:`start_acounterexamples` delegate to :meth:`models` / :meth:`amodels` / :meth:`start_amodels`.
     """
 
     __slots__ = (
@@ -546,3 +554,37 @@ class Mace4:
             size_range=size_range,
             domain_increment=opts.increment,
         )
+
+    def counterexamples(
+        self,
+        input: str | bytes | Path | None = None,
+        *,
+        options: Mace4CliOptions | None = None,
+        on_model: Callable[[Mace4Interpretation, tuple[ParseWarning, ...]], None] | None = None,
+        **kwargs: Any,
+    ) -> Iterator[Mace4Interpretation]:
+        """Alias of :meth:`models` — counterexample / finite-model search wording."""
+        return self.models(input, options=options, on_model=on_model, **kwargs)
+
+    async def acounterexamples(
+        self,
+        input: str | bytes | Path | None = None,
+        *,
+        options: Mace4CliOptions | None = None,
+        on_model: Callable[[Mace4Interpretation, tuple[ParseWarning, ...]], Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Mace4Interpretation]:
+        """Alias of :meth:`amodels`."""
+        async for mi in self.amodels(input, options=options, on_model=on_model, **kwargs):
+            yield mi
+
+    def start_acounterexamples(
+        self,
+        input: str | bytes | Path | None = None,
+        *,
+        options: Mace4CliOptions | None = None,
+        on_model: Callable[[Mace4Interpretation, tuple[ParseWarning, ...]], Any] | None = None,
+        **kwargs: Any,
+    ) -> Mace4SearchHandle:
+        """Alias of :meth:`start_amodels`."""
+        return self.start_amodels(input, options=options, on_model=on_model, **kwargs)

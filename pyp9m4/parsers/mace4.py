@@ -542,6 +542,14 @@ class Mace4Interpretation:
             raise KeyError(f"no value for function {function}{t}")
         return lk[key]
 
+    def get_value(self, function: str, *args: int) -> int:
+        """Alias of :meth:`value_at` (SMT-style “read value from model” naming)."""
+        return self.value_at(function, *args)
+
+    def model_eval(self, function: str, *args: int) -> int:
+        """Alias of :meth:`value_at` (avoids a method named ``eval``, which would shadow :func:`eval`)."""
+        return self.value_at(function, *args)
+
     def as_relation(self, name: str) -> Callable[..., bool]:
         """Callable taking ``arity`` domain integers; same as :meth:`holds`."""
         if name not in self._relations_map():

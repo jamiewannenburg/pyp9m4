@@ -89,6 +89,8 @@ interpretation( 2, [
     assert mi.functions == {"c1": 0, "f": 1}
     assert mi.relations == {"R": 2}
     assert mi.value_at("c1") == 0
+    assert mi.get_value("c1") == 0
+    assert mi.model_eval("c1") == 0
     assert mi.value_at("f", 0) == 1
     assert mi.holds("R", 0, 0) is True
     assert mi.as_function("f")(0) == 1
