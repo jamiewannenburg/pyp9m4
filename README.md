@@ -10,25 +10,25 @@ Python wrapper for **Prover9**, **Mace4**, and related [LADR](https://www.cs.unm
 The package is **not published on PyPI yet**. Install from your Git repository (replace the URL with yours once it exists):
 
 ```bash
-pip install "pyp9m4 @ git+https://github.com/<user-or-org>/pyp9m4.git"
+pip install "pyp9m4 @ git+https://github.com/jamiewannenburg/pyp9m4.git"
 ```
 
 Pin a branch or tag if you need to:
 
 ```bash
-pip install "pyp9m4 @ git+https://github.com/<user-or-org>/pyp9m4.git@main"
+pip install "pyp9m4 @ git+https://github.com/jamiewannenburg/pyp9m4.git@main"
 ```
 
 Optional extras (see `pyproject.toml`):
 
 ```bash
-pip install "pyp9m4[smt] @ git+https://github.com/<user-or-org>/pyp9m4.git"
+pip install "pyp9m4[smt] @ git+https://github.com/jamiewannenburg/pyp9m4.git"
 ```
 
 For development and tests, clone and use an editable install:
 
 ```bash
-git clone https://github.com/<user-or-org>/pyp9m4.git
+git clone https://github.com/jamiewannenburg/pyp9m4.git
 cd pyp9m4
 pip install -e ".[dev]"
 ```
