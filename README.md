@@ -135,6 +135,36 @@ async def mace4_background():
 
 Mace4 `status()` includes best-effort fields such as `models_found` and `last_domain_size`; treat them as hints, not full solver internals.
 
+## API-oriented usage (dispatch, JSON, jobs)
+
+The package root (`import pyp9m4`) exposes a **stable surface** for HTTP or other callers: unified tool dispatch, JSON-friendly snapshots, optional ingestion helpers for nested request bodies, and job orchestration.
+
+| Area | Symbols (from `pyp9m4` unless noted) |
+|------|-------------------------------------|
+| Single entry point | `arun`, `normalize_tool_name`, `ToolName`, `ToolRegistry`, `ToolRunEnvelope` |
+| Loose option bodies | `unwrap_gui_value`, `coerce_mapping`, `cli_options_from_nested_dict`; per-tool `from_nested_dict` on dataclasses under `pyp9m4.options` |
+| JSON | `.to_dict()` on envelopes, results, and snapshots; `dataclass_to_json_dict`, `jsonify_for_api`, `job_status_snapshot_to_json_dict` |
+| Jobs | `JobManager`, `ManagedJobSnapshot`, `JobMetadata`; combine with `start_arun` / `start_amodels` handles |
+| Streaming (e.g. SSE) | `async for event in handle.event_stream():` — each `event` is a small `dict` (`stdout`, `stderr`, `model_found`, `lifecycle_change`, …) |
+
+Example: unified dispatch and a JSON-serializable envelope (options can be a mapping or a CLI dataclass instance):
+
+```python
+import asyncio
+from pyp9m4 import arun, cli_options_from_nested_dict
+from pyp9m4.options import Prover9CliOptions
+
+async def main():
+    body = {"max_seconds": {"value": 120}}
+    opts = cli_options_from_nested_dict(Prover9CliOptions, body)
+    envelope = await arun("prover9", "formulas ...", options=opts)
+    return envelope.to_dict()
+
+asyncio.run(main())
+```
+
+For a full list of names re-exported from the package, see `__all__` in `pyp9m4/__init__.py`.
+
 ## Typed CLI options
 
 Each tool has a dataclass with `to_argv()` returning fragments **after** the executable name (`pyp9m4.options`):

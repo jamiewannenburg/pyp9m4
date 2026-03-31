@@ -3,6 +3,10 @@
 Primary API: :class:`Prover9` and :class:`Mace4` (constructor defaults, per-call overrides,
 parsed results, streaming models, and optional background jobs with :func:`job_status_snapshot_to_json_dict`).
 
+Unified tool dispatch: :func:`arun`, :class:`ToolRegistry`, :data:`ToolName`, :func:`normalize_tool_name`.
+HTTP-style option bodies: :func:`unwrap_gui_value`, :func:`coerce_mapping`, :func:`cli_options_from_nested_dict`
+(also :meth:`Prover9CliOptions.from_nested_dict` and siblings under :mod:`pyp9m4.options`).
+
 Multi-step stdin chains use :func:`pipeline` and :class:`PipelineBuilder`. Lower-level pieces remain
 available — see :mod:`pyp9m4.resolver` and :mod:`pyp9m4.runner`. Use :func:`dataclass_to_json_dict` /
 :func:`jsonify_for_api` or each type’s :meth:`~object.to_dict` for JSON APIs.
@@ -37,6 +41,11 @@ from pyp9m4.pipeline_facades import (
 )
 from pyp9m4.prover9_facade import Prover9, Prover9ProofHandle, Prover9ProofResult
 from pyp9m4.pipeline import ChainResult, ChainStep, PipelineBuilder, pipeline
+from pyp9m4.options import (
+    cli_options_from_nested_dict,
+    coerce_mapping,
+    unwrap_gui_value,
+)
 from pyp9m4.toolkit import ToolRegistry, ToolRunEnvelope, arun, normalize_tool_name
 from pyp9m4.resolver import (
     BINARIES_VERSION,
@@ -44,6 +53,7 @@ from pyp9m4.resolver import (
     BinaryResolverError,
     CachedBinariesError,
     ChecksumMismatchError,
+    ToolName,
     UnsupportedPlatformError,
     asset_filename_for_platform_key,
     detect_platform_key,
@@ -73,8 +83,12 @@ __all__ = [
     "pipeline",
     "ToolRegistry",
     "ToolRunEnvelope",
+    "ToolName",
     "arun",
     "normalize_tool_name",
+    "cli_options_from_nested_dict",
+    "coerce_mapping",
+    "unwrap_gui_value",
     "Prover9",
     "Prover9ProofHandle",
     "Prover9ProofResult",
