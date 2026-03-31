@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: job-manager
     content: Implement JobManager (UUID, tasks, snapshots, cancel, in-memory + TTL; persistence hook optional)
-    status: pending
+    status: completed
   - id: event-stream
     content: Add event_stream() -> AsyncIterator[dict] on job handles mapping runner events to SSE-friendly schema
     status: pending

@@ -8,6 +8,7 @@ Lower-level pieces remain available for custom pipelines — see :mod:`pyp9m4.re
 :meth:`~object.to_dict` for JSON APIs.
 """
 
+from pyp9m4.job_manager import JobManager, JobManagerError, JobMetadata, ManagedJobSnapshot
 from pyp9m4.jobs import (
     JobLifecycle,
     JobLifecyclePhase,
@@ -77,6 +78,10 @@ __all__ = [
     "Mace4",
     "Mace4SearchHandle",
     # Job lifecycle and polling (e.g. web APIs)
+    "JobManager",
+    "JobManagerError",
+    "JobMetadata",
+    "ManagedJobSnapshot",
     "JobLifecycle",
     "JobLifecyclePhase",
     "Prover9AsyncJobHandle",
