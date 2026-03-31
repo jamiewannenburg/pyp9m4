@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: options-ingest
     content: Implement options/ingest.py + from_nested_dict on Prover9/Mace4/interpformat/isofilter/prooftrans CLI dataclasses with tests
-    status: pending
+    status: completed
   - id: pipeline-facades
     content: Add Isofilter/Interpformat/Prooftrans facade classes with arun + structured results; register in ToolRegistry
     status: pending

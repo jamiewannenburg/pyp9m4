@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from pyp9m4.options.ingest import (
+    cli_options_from_nested_dict,
+    coerce_mapping,
+    unwrap_gui_value,
+)
 from pyp9m4.options.interpformat import (
     INTERPFORMAT_DOCUMENTED_HELP_SUBSTRINGS,
     INTERPFORMAT_HELP_ARGV,
@@ -33,6 +38,9 @@ from pyp9m4.options.registry import PROOFTRANS_HELP_STDIN, iter_tool_cli_doc_spe
 from pyp9m4.options.validate import assert_help_text_covers_tokens, fetch_tool_help_text
 
 __all__ = [
+    "cli_options_from_nested_dict",
+    "coerce_mapping",
+    "unwrap_gui_value",
     "INTERPFORMAT_DOCUMENTED_HELP_SUBSTRINGS",
     "INTERPFORMAT_HELP_ARGV",
     "ISOFILTER_DOCUMENTED_HELP_SUBSTRINGS",

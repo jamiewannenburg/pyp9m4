@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
+
+from pyp9m4.options.ingest import cli_options_from_nested_dict
 
 # ``prover9 -h`` / ``prover9 --help`` prints usage; ``-h`` is what the usage line documents.
 PROVER9_HELP_ARGV: tuple[str, ...] = ("-h",)
@@ -50,3 +53,7 @@ class Prover9CliOptions:
             out.append("-f")
             out.extend(self.input_files)
         return out
+
+    @classmethod
+    def from_nested_dict(cls, data: Mapping[str, Any] | None) -> Prover9CliOptions:
+        return cli_options_from_nested_dict(cls, data)

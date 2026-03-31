@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
+
+from pyp9m4.options.ingest import cli_options_from_nested_dict
 
 # LADR prints full usage for ``mace4 -help`` (single-dash; ``--help`` is rejected).
 MACE4_HELP_ARGV: tuple[str, ...] = ("-help",)
@@ -126,3 +129,7 @@ class Mace4CliOptions:
         if self.ignore_unrecognized_assigns:
             out.append("-c")
         return out
+
+    @classmethod
+    def from_nested_dict(cls, data: Mapping[str, Any] | None) -> Mace4CliOptions:
+        return cli_options_from_nested_dict(cls, data)

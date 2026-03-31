@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, Mapping
+
+from pyp9m4.options.ingest import cli_options_from_nested_dict
 
 InterpformatStyle = Literal["standard", "standard2", "portable", "tabular", "raw", "cooked", "tex", "xml"]
 
@@ -44,3 +46,7 @@ class InterpformatCliOptions:
         if self.output_operations is not None:
             out.extend(("output", self.output_operations))
         return out
+
+    @classmethod
+    def from_nested_dict(cls, data: Mapping[str, Any] | None) -> InterpformatCliOptions:
+        return cli_options_from_nested_dict(cls, data)

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, Mapping
+
+from pyp9m4.options.ingest import cli_options_from_nested_dict
 
 ProofTransMode = Literal["default", "parents_only", "xml", "ivy", "hints", "tagged"]
 
@@ -62,3 +64,7 @@ class ProofTransCliOptions:
         if self.input_file is not None:
             out.extend(("-f", self.input_file))
         return out
+
+    @classmethod
+    def from_nested_dict(cls, data: Mapping[str, Any] | None) -> ProofTransCliOptions:
+        return cli_options_from_nested_dict(cls, data)

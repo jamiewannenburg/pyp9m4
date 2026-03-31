@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
+
+from pyp9m4.options.ingest import cli_options_from_nested_dict
 
 ISOFILTER_HELP_ARGV: tuple[str, ...] = ("-help",)
 
@@ -40,3 +43,7 @@ class IsofilterCliOptions:
         if self.discrim_path is not None:
             out.extend(("discrim", self.discrim_path))
         return out
+
+    @classmethod
+    def from_nested_dict(cls, data: Mapping[str, Any] | None) -> IsofilterCliOptions:
+        return cli_options_from_nested_dict(cls, data)
