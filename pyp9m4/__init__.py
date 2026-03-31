@@ -3,9 +3,9 @@
 Primary API: :class:`Prover9` and :class:`Mace4` (constructor defaults, per-call overrides,
 parsed results, streaming models, and optional background jobs with :func:`job_status_snapshot_to_json_dict`).
 
-Lower-level pieces remain available for custom pipelines — see :mod:`pyp9m4.resolver` and
-:mod:`pyp9m4.runner`. Use :func:`dataclass_to_json_dict` / :func:`jsonify_for_api` or each type’s
-:meth:`~object.to_dict` for JSON APIs.
+Multi-step stdin chains use :func:`pipeline` and :class:`PipelineBuilder`. Lower-level pieces remain
+available — see :mod:`pyp9m4.resolver` and :mod:`pyp9m4.runner`. Use :func:`dataclass_to_json_dict` /
+:func:`jsonify_for_api` or each type’s :meth:`~object.to_dict` for JSON APIs.
 """
 
 from pyp9m4.job_manager import JobManager, JobManagerError, JobMetadata, ManagedJobSnapshot
@@ -36,6 +36,7 @@ from pyp9m4.pipeline_facades import (
     Prooftrans,
 )
 from pyp9m4.prover9_facade import Prover9, Prover9ProofHandle, Prover9ProofResult
+from pyp9m4.pipeline import ChainResult, ChainStep, PipelineBuilder, pipeline
 from pyp9m4.toolkit import ToolRegistry, ToolRunEnvelope, arun, normalize_tool_name
 from pyp9m4.resolver import (
     BINARIES_VERSION,
@@ -66,6 +67,10 @@ __all__ = [
     "Isofilter",
     "PipelineToolResult",
     "Prooftrans",
+    "ChainResult",
+    "ChainStep",
+    "PipelineBuilder",
+    "pipeline",
     "ToolRegistry",
     "ToolRunEnvelope",
     "arun",

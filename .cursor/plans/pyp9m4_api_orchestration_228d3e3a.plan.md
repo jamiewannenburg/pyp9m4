@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: fluent-pipeline
     content: Implement PipelineBuilder chain API + ChainResult; tests for multi-step pipe
-    status: pending
+    status: completed
   - id: exports-docs
     content: Export stable public API from __init__.py; README section for API-oriented usage (no unrelated markdown churn)
     status: pending
