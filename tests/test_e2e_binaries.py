@@ -201,5 +201,6 @@ async def test_e2e_toolkit_arun_prooftrans(resolver: BinaryResolver) -> None:
     p9 = Prover9(resolver=resolver, timeout_s=120)
     pr = p9.run(options=Prover9CliOptions(input_files=(str(inp),)))
     out = await arun("pt", pr.stdout, resolver=resolver, timeout_s=120)
-    assert out.lifecycle == "succeeded"
-    assert out.exit_code == 0
+    assert out.pipeline is not None
+    assert out.pipeline.lifecycle == "succeeded"
+    assert out.pipeline.exit_code == 0

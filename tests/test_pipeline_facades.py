@@ -12,7 +12,7 @@ from pyp9m4.options.isofilter import IsofilterCliOptions
 from pyp9m4.options.prooftrans import ProofTransCliOptions
 from pyp9m4.pipeline_facades import PipelineToolResult
 from pyp9m4.runner import AsyncToolRunner, RunStatus, ToolRunResult
-from pyp9m4.toolkit import ToolRegistry, arun, normalize_tool_name
+from pyp9m4.toolkit import ToolRegistry, ToolRunEnvelope, arun, normalize_tool_name
 
 
 @pytest.mark.asyncio
@@ -58,8 +58,10 @@ async def test_arun_dispatches_interpformat(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
     r = await arun("ifc", "x", options=InterpformatCliOptions(style="portable"))
-    assert r.stdout == "[]"
-    assert r.lifecycle == "succeeded"
+    assert isinstance(r, ToolRunEnvelope)
+    assert r.pipeline is not None
+    assert r.pipeline.stdout == "[]"
+    assert r.pipeline.lifecycle == "succeeded"
 
 
 def test_normalize_tool_name_aliases() -> None:
@@ -81,16 +83,42 @@ def test_tool_registry_get() -> None:
     assert "isofilter" in reg.registered_pipeline_tools()
 
 
-def test_tool_registry_get_raises_for_prover9() -> None:
+def test_tool_registry_get_prover9_and_mace4() -> None:
     reg = ToolRegistry()
-    with pytest.raises(KeyError):
-        reg.get("prover9")
+    assert reg.get("prover9") is reg.prover9
+    assert reg.get("mace4") is reg.mace4
 
 
 @pytest.mark.asyncio
-async def test_arun_rejects_prover9() -> None:
-    with pytest.raises(ValueError, match="does not dispatch"):
-        await arun("prover9", "x")
+async def test_arun_dispatches_prover9_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_arun(
+        self: object,
+        input: object,
+        *,
+        options: object = None,
+        **kw: object,
+    ) -> object:
+        from pyp9m4.prover9_facade import Prover9ProofResult
+        from pyp9m4.parsers.prover9 import parse_prover9_output
+        from pyp9m4.parsers.prover9_outcome import ProverOutcome
+
+        return Prover9ProofResult(
+            parsed=parse_prover9_output(""),
+            stdout="ok",
+            stderr="",
+            exit_code=0,
+            lifecycle="succeeded",
+            outcome=ProverOutcome.proved,
+        )
+
+    monkeypatch.setattr("pyp9m4.prover9_facade.Prover9.arun", fake_arun)
+    env = await arun("prover9", "formulas(go).\nend_of_list.\n")
+    assert isinstance(env, ToolRunEnvelope)
+    assert env.program == "prover9"
+    assert env.prover9 is not None
+    assert env.prover9.stdout == "ok"
+    assert env.raw is not None
+    assert env.raw.stdout == "ok"
 
 
 def test_prooftrans_run_sync_mocked(monkeypatch: pytest.MonkeyPatch) -> None:

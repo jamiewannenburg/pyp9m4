@@ -35,7 +35,7 @@ from pyp9m4.pipeline_facades import (
     Prooftrans,
 )
 from pyp9m4.prover9_facade import Prover9, Prover9ProofHandle, Prover9ProofResult
-from pyp9m4.toolkit import ToolRegistry, arun, normalize_tool_name
+from pyp9m4.toolkit import ToolRegistry, ToolRunEnvelope, arun, normalize_tool_name
 from pyp9m4.resolver import (
     BINARIES_VERSION,
     BinaryResolver,
@@ -66,6 +66,7 @@ __all__ = [
     "PipelineToolResult",
     "Prooftrans",
     "ToolRegistry",
+    "ToolRunEnvelope",
     "arun",
     "normalize_tool_name",
     "Prover9",

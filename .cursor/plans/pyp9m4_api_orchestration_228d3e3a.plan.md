@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: unified-arun
     content: Implement ToolRegistry + async arun(program, input, options) delegating to facades
-    status: pending
+    status: completed
   - id: job-manager
     content: Implement JobManager (UUID, tasks, snapshots, cancel, in-memory + TTL; persistence hook optional)
     status: pending
