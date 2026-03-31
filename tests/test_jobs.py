@@ -119,6 +119,10 @@ def test_runtime_checkable_protocols_match_minimal_handles() -> None:
         def cancel(self) -> None:
             return None
 
+        async def event_stream(self) -> AsyncIterator[dict[str, Any]]:
+            if False:
+                yield {}
+
     class _MiniMace4Handle:
         async def status(self) -> Mace4JobStatusSnapshot:
             return Mace4JobStatusSnapshot(
@@ -142,6 +146,10 @@ def test_runtime_checkable_protocols_match_minimal_handles() -> None:
         async def amodels(self) -> AsyncIterator[Any]:
             if False:
                 yield None
+
+        async def event_stream(self) -> AsyncIterator[dict[str, Any]]:
+            if False:
+                yield {}
 
     assert isinstance(_MiniProver9Handle(), Prover9AsyncJobHandle)
     assert isinstance(_MiniMace4Handle(), Mace4AsyncJobHandle)

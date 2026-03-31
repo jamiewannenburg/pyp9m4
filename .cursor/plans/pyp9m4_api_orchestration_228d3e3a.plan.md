@@ -19,7 +19,7 @@ todos:
     status: completed
   - id: event-stream
     content: Add event_stream() -> AsyncIterator[dict] on job handles mapping runner events to SSE-friendly schema
-    status: pending
+    status: completed
   - id: fluent-pipeline
     content: Implement PipelineBuilder chain API + ChainResult; tests for multi-step pipe
     status: pending

@@ -14,6 +14,12 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
+from pyp9m4.event_stream import (
+    sse_lifecycle_event,
+    sse_model_found_event,
+    sse_stderr_event,
+    sse_stdout_event,
+)
 from pyp9m4.jobs import JobLifecycle, Mace4JobStatusSnapshot
 from pyp9m4.options.interpformat import InterpformatCliOptions
 from pyp9m4.options.isofilter import IsofilterCliOptions
@@ -104,6 +110,7 @@ class Mace4SearchHandle:
     __slots__ = (
         "_argv",
         "_domain_increment",
+        "_event_queue",
         "_model_queue",
         "_result_event",
         "_runner_task",
@@ -117,6 +124,7 @@ class Mace4SearchHandle:
         runner_task: asyncio.Task[None],
         state: _Mace4JobState,
         model_queue: asyncio.Queue[Mace4Interpretation | None],
+        event_queue: asyncio.Queue[dict[str, Any] | None],
         result_event: asyncio.Event,
         argv: tuple[str, ...],
         size_range: tuple[int | None, int | None] | None,
@@ -125,6 +133,7 @@ class Mace4SearchHandle:
         self._runner_task = runner_task
         self._state = state
         self._model_queue = model_queue
+        self._event_queue = event_queue
         self._result_event = result_event
         self._argv = argv
         self._size_range = size_range
@@ -160,6 +169,14 @@ class Mace4SearchHandle:
         """Alias of :meth:`amodels` (counterexample / finite-model wording)."""
         async for m in self.amodels():
             yield m
+
+    async def event_stream(self) -> AsyncIterator[dict[str, Any]]:
+        """Yield SSE-friendly JSON events: ``stdout`` / ``stderr``, ``model_found``, ``lifecycle_change``."""
+        while True:
+            item = await self._event_queue.get()
+            if item is None:
+                break
+            yield item
 
 
 class Mace4:
@@ -484,12 +501,14 @@ class Mace4:
         size_range = self._size_range_hint(opts)
         state = _Mace4JobState(argv=argv, lifecycle="pending")
         queue: asyncio.Queue[Mace4Interpretation | None] = asyncio.Queue()
+        event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         done_event = asyncio.Event()
         mace4_self = self
 
         async def _run() -> None:
             t0 = time.perf_counter()
             state.lifecycle = "running"
+            await event_queue.put(sse_lifecycle_event("running"))
             try:
                 if elim:
                     st, code, _o, err, interps = await mace4_self._arun_isomorphic_pipeline(
@@ -504,6 +523,7 @@ class Mace4:
                     for mi in interps:
                         state.models_found += 1
                         state.last_domain_size = mi.domain_size
+                        await event_queue.put(sse_model_found_event(mi))
                         if on_model is not None:
                             r = on_model(mi, ())
                             if inspect.isawaitable(r):
@@ -527,10 +547,15 @@ class Mace4:
                     state.lifecycle = _run_status_to_lifecycle(res.status)
 
                 async for ev in runner.stream_events(inv, parse_hook=hook, on_complete=on_complete):
-                    if isinstance(ev, tuple) and len(ev) == 2 and isinstance(ev[0], Mace4Interpretation):
+                    if isinstance(ev, StdoutLine):
+                        await event_queue.put(sse_stdout_event(ev.text))
+                    elif isinstance(ev, StderrLine):
+                        await event_queue.put(sse_stderr_event(ev.text))
+                    elif isinstance(ev, tuple) and len(ev) == 2 and isinstance(ev[0], Mace4Interpretation):
                         mi, warns = ev
                         state.models_found += 1
                         state.last_domain_size = mi.domain_size
+                        await event_queue.put(sse_model_found_event(mi))
                         if on_model is not None:
                             r = on_model(mi, warns)
                             if inspect.isawaitable(r):
@@ -541,6 +566,8 @@ class Mace4:
                 raise
             finally:
                 state.duration_s = time.perf_counter() - t0
+                await event_queue.put(sse_lifecycle_event(state.lifecycle))
+                await event_queue.put(None)
                 await queue.put(None)
                 done_event.set()
 
@@ -549,6 +576,7 @@ class Mace4:
             runner_task=task,
             state=state,
             model_queue=queue,
+            event_queue=event_queue,
             result_event=done_event,
             argv=argv,
             size_range=size_range,

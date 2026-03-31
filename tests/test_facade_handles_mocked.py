@@ -11,22 +11,33 @@ from pyp9m4.options.mace4 import Mace4CliOptions
 from pyp9m4.parsers.prover9_outcome import ProverOutcome
 from pyp9m4.prover9_facade import Prover9
 from pyp9m4.resolver import BinaryResolver
-from pyp9m4.runner import AsyncToolRunner, RunStatus, StdoutLine, ToolRunResult
+from pyp9m4.runner import AsyncToolRunner, RunStatus, StderrLine, StdoutLine, ToolRunResult
 
 
 @pytest.mark.asyncio
 async def test_prover9_proof_handle_status_transitions_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _fake_run(self: AsyncToolRunner, inv: object) -> ToolRunResult:  # noqa: ARG002
-        return ToolRunResult(
-            status=RunStatus.SUCCEEDED,
-            argv=getattr(inv, "argv", ()),
-            exit_code=0,
-            duration_s=0.01,
-            stdout="THEOREM PROVED\n",
-            stderr="",
-        )
+    async def _fake_stream(
+        self: AsyncToolRunner,
+        inv: object,
+        *,
+        parse_hook: object = None,
+        on_complete: object = None,
+    ):
+        yield StdoutLine("THEOREM PROVED\n")
+        if on_complete is not None:
+            res = ToolRunResult(
+                status=RunStatus.SUCCEEDED,
+                argv=getattr(inv, "argv", ()),
+                exit_code=0,
+                duration_s=0.01,
+                stdout="THEOREM PROVED\n",
+                stderr="",
+            )
+            oc = on_complete(res)
+            if inspect.isawaitable(oc):
+                await oc
 
-    monkeypatch.setattr(AsyncToolRunner, "run", _fake_run)
+    monkeypatch.setattr(AsyncToolRunner, "stream_events", _fake_stream)
     p = Prover9(resolver=BinaryResolver())
     handle = p.start_arun("formulas(go).\nend_of_list.\n")
     snap0 = await handle.status()
@@ -46,17 +57,28 @@ async def test_prover9_proof_handle_status_transitions_success(monkeypatch: pyte
 
 @pytest.mark.asyncio
 async def test_prover9_proof_handle_status_failed_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _fake_run(self: AsyncToolRunner, inv: object) -> ToolRunResult:  # noqa: ARG002
-        return ToolRunResult(
-            status=RunStatus.FAILED,
-            argv=getattr(inv, "argv", ()),
-            exit_code=2,
-            duration_s=0.01,
-            stdout="",
-            stderr="syntax error\n",
-        )
+    async def _fake_stream(
+        self: AsyncToolRunner,
+        inv: object,
+        *,
+        parse_hook: object = None,
+        on_complete: object = None,
+    ):
+        yield StderrLine("syntax error\n")
+        if on_complete is not None:
+            res = ToolRunResult(
+                status=RunStatus.FAILED,
+                argv=getattr(inv, "argv", ()),
+                exit_code=2,
+                duration_s=0.01,
+                stdout="",
+                stderr="syntax error\n",
+            )
+            oc = on_complete(res)
+            if inspect.isawaitable(oc):
+                await oc
 
-    monkeypatch.setattr(AsyncToolRunner, "run", _fake_run)
+    monkeypatch.setattr(AsyncToolRunner, "stream_events", _fake_stream)
     p = Prover9(resolver=BinaryResolver())
     handle = p.start_arun("bad")
     await handle.wait()
@@ -127,6 +149,100 @@ async def test_mace4_search_handle_status_and_models_mocked_stream(
     models = [x async for x in handle.amodels()]
     assert len(models) == 1
     assert models[0].domain_size == 2
+
+
+@pytest.mark.asyncio
+async def test_prover9_proof_handle_event_stream_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fake_stream(
+        self: AsyncToolRunner,
+        inv: object,
+        *,
+        parse_hook: object = None,
+        on_complete: object = None,
+    ):
+        yield StdoutLine("line-a")
+        yield StdoutLine("line-b")
+        if on_complete is not None:
+            res = ToolRunResult(
+                status=RunStatus.SUCCEEDED,
+                argv=getattr(inv, "argv", ()),
+                exit_code=0,
+                duration_s=0.01,
+                stdout="line-a\nline-b\n",
+                stderr="",
+            )
+            oc = on_complete(res)
+            if inspect.isawaitable(oc):
+                await oc
+
+    monkeypatch.setattr(AsyncToolRunner, "stream_events", _fake_stream)
+    p = Prover9(resolver=BinaryResolver())
+    handle = p.start_arun("x")
+    events = [e async for e in handle.event_stream()]
+    await handle.wait()
+    assert events[0]["type"] == "lifecycle_change"
+    assert events[0]["phase"] == "running"
+    assert events[1] == {"type": "stdout", "line": "line-a"}
+    assert events[2] == {"type": "stdout", "line": "line-b"}
+    assert events[-1]["type"] == "lifecycle_change"
+    assert events[-1]["phase"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_mace4_search_handle_event_stream_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = [
+        "interpretation( 2, [",
+        "   function = c1 = 0,",
+        "]).",
+    ]
+
+    async def _fake_stream(
+        self: AsyncToolRunner,
+        inv: object,
+        *,
+        parse_hook: object = None,
+        on_complete: object = None,
+    ):
+        if parse_hook is not None:
+            for line in lines:
+                ev = StdoutLine(line)
+                yield ev
+                async for x in parse_hook(ev):  # type: ignore[operator]
+                    yield x
+        yield StderrLine("mace4 note")
+        if on_complete is not None:
+            res = ToolRunResult(
+                status=RunStatus.SUCCEEDED,
+                argv=getattr(inv, "argv", ()),
+                exit_code=0,
+                duration_s=0.02,
+                stdout="\n".join(lines),
+                stderr="mace4 note\n",
+            )
+            oc = on_complete(res)
+            if inspect.isawaitable(oc):
+                await oc
+
+    monkeypatch.setattr(AsyncToolRunner, "stream_events", _fake_stream)
+
+    m = Mace4(
+        resolver=BinaryResolver(),
+        options=Mace4CliOptions(domain_size=2, end_size=5, increment=1),
+    )
+    handle = m.start_amodels("formulas(go).\nend_of_list.\n")
+    events = [e async for e in handle.event_stream()]
+    await handle.wait()
+    assert events[0]["type"] == "lifecycle_change"
+    assert events[0]["phase"] == "running"
+    assert {"type": "stdout", "line": lines[0]} in events
+    assert {"type": "stderr", "line": "mace4 note"} in events
+    mf = [e for e in events if e["type"] == "model_found"]
+    assert len(mf) == 1
+    assert mf[0]["model"]["domain_size"] == 2
+    assert events[-1]["type"] == "lifecycle_change"
+    assert events[-1]["phase"] == "succeeded"
 
 
 @pytest.mark.asyncio

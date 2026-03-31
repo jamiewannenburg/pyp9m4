@@ -74,10 +74,17 @@ async def test_prover9_start_arun_status_and_result() -> None:
 
 @pytest.mark.asyncio
 async def test_prover9_start_arun_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _blocked_run(self: AsyncToolRunner, inv: object) -> object:  # noqa: ARG002
+    async def _blocked_stream(
+        self: AsyncToolRunner,
+        inv: object,  # noqa: ARG002
+        *,
+        parse_hook: object = None,
+        on_complete: object = None,
+    ):
         await asyncio.sleep(3600.0)
+        yield  # unreachable unless sleep finishes; keeps this an async generator
 
-    monkeypatch.setattr(AsyncToolRunner, "run", _blocked_run)
+    monkeypatch.setattr(AsyncToolRunner, "stream_events", _blocked_stream)
 
     p = Prover9(resolver=BinaryResolver())
     handle = p.start_arun("formulas(go).\nend_of_list.\n")

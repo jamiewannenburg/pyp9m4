@@ -112,6 +112,10 @@ class Prover9AsyncJobHandle(Protocol):
     def cancel(self) -> None:
         ...
 
+    async def event_stream(self) -> AsyncIterator[dict[str, Any]]:
+        """SSE-friendly line and lifecycle events (see concrete handle)."""
+        ...
+
 
 @runtime_checkable
 class Mace4AsyncJobHandle(Protocol):
@@ -132,4 +136,8 @@ class Mace4AsyncJobHandle(Protocol):
 
     async def amodels(self) -> AsyncIterator[Any]:
         """Async iterator of models (see concrete handle)."""
+        ...
+
+    async def event_stream(self) -> AsyncIterator[dict[str, Any]]:
+        """SSE-friendly line, model, and lifecycle events (see concrete handle)."""
         ...

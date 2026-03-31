@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
+from pyp9m4.event_stream import (
+    sse_lifecycle_event,
+    sse_stderr_event,
+    sse_stdout_event,
+)
 from pyp9m4.jobs import JobLifecycle, Prover9JobStatusSnapshot
 from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers.prover9 import Prover9Parsed, parse_prover9_output
@@ -19,6 +24,8 @@ from pyp9m4.serialization import dataclass_to_json_dict
 from pyp9m4.runner import (
     AsyncToolRunner,
     RunStatus,
+    StderrLine,
+    StdoutLine,
     SubprocessInvocation,
     ToolRunResult,
     _sync_run_awaitable,
@@ -105,7 +112,7 @@ class _Prover9JobState:
 class Prover9ProofHandle:
     """Background Prover9 run; poll with :meth:`status` on the same event loop that started it."""
 
-    __slots__ = ("_result_event", "_runner_task", "_state")
+    __slots__ = ("_event_queue", "_result_event", "_runner_task", "_state")
 
     def __init__(
         self,
@@ -113,10 +120,12 @@ class Prover9ProofHandle:
         runner_task: asyncio.Task[None],
         state: _Prover9JobState,
         result_event: asyncio.Event,
+        event_queue: asyncio.Queue[dict[str, Any] | None],
     ) -> None:
         self._runner_task = runner_task
         self._state = state
         self._result_event = result_event
+        self._event_queue = event_queue
 
     @property
     def argv(self) -> tuple[str, ...]:
@@ -137,6 +146,14 @@ class Prover9ProofHandle:
 
     def cancel(self) -> None:
         self._runner_task.cancel()
+
+    async def event_stream(self) -> AsyncIterator[dict[str, Any]]:
+        """Yield SSE-friendly JSON events: ``stdout`` / ``stderr`` lines and ``lifecycle_change``."""
+        while True:
+            item = await self._event_queue.get()
+            if item is None:
+                break
+            yield item
 
 
 class Prover9:
@@ -280,13 +297,28 @@ class Prover9:
         inv = self._build_inv(opts, stdin=stdin, timeout_s=timeout_s)
         state = _Prover9JobState(argv=argv, lifecycle="pending")
         done_event = asyncio.Event()
+        event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         facade_self = self
 
         async def _run() -> None:
             t0 = time.perf_counter()
             state.lifecycle = "running"
+            await event_queue.put(sse_lifecycle_event("running"))
             try:
-                res = await AsyncToolRunner().run(inv)
+                final_res: ToolRunResult | None = None
+
+                async def on_complete(res: ToolRunResult) -> None:
+                    nonlocal final_res
+                    final_res = res
+
+                async for ev in AsyncToolRunner().stream_events(inv, on_complete=on_complete):
+                    if isinstance(ev, StdoutLine):
+                        await event_queue.put(sse_stdout_event(ev.text))
+                    elif isinstance(ev, StderrLine):
+                        state.stderr_lines.append(ev.text)
+                        await event_queue.put(sse_stderr_event(ev.text))
+                assert final_res is not None
+                res = final_res
                 state.exit_code = res.exit_code
                 state.stderr_lines.clear()
                 state.stderr_lines.extend(res.stderr.splitlines())
@@ -307,10 +339,17 @@ class Prover9:
                 # Completing normally lets :meth:`wait` / :meth:`result` observe cancellation.
             finally:
                 state.duration_s = time.perf_counter() - t0
+                await event_queue.put(sse_lifecycle_event(state.lifecycle))
+                await event_queue.put(None)
                 done_event.set()
 
         task = asyncio.create_task(_run())
-        return Prover9ProofHandle(runner_task=task, state=state, result_event=done_event)
+        return Prover9ProofHandle(
+            runner_task=task,
+            state=state,
+            result_event=done_event,
+            event_queue=event_queue,
+        )
 
     def prove(
         self,

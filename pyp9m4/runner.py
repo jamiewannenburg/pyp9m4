@@ -162,6 +162,8 @@ class AsyncToolRunner:
         """
         queue: asyncio.Queue[Any] = asyncio.Queue()
         sentinel = object()
+        out_buf: list[str] = []
+        err_buf: list[str] = []
 
         async def emit_layer_a(e: StreamEvent) -> None:
             await queue.put(e)
@@ -170,15 +172,26 @@ class AsyncToolRunner:
                     await queue.put(x)
 
         async def on_out(line: str) -> None:
+            out_buf.append(line)
             await emit_layer_a(StdoutLine(line))
 
         async def on_err(line: str) -> None:
+            err_buf.append(line)
             await emit_layer_a(StderrLine(line))
 
         async def runner_coro() -> ToolRunResult:
             res: ToolRunResult | None = None
             try:
-                res = await self._execute(inv, line_handlers=(on_out, on_err))
+                meta = await self._execute(inv, line_handlers=(on_out, on_err))
+                res = ToolRunResult(
+                    status=meta.status,
+                    argv=meta.argv,
+                    exit_code=meta.exit_code,
+                    duration_s=meta.duration_s,
+                    stdout="\n".join(out_buf),
+                    stderr="\n".join(err_buf),
+                    command_cwd=meta.command_cwd,
+                )
                 return res
             finally:
                 try:

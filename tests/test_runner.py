@@ -84,6 +84,7 @@ async def test_stream_events_on_complete() -> None:
 
     assert len(seen) == 1
     assert seen[0].status == RunStatus.SUCCEEDED
+    assert seen[0].stdout.strip() == "ok"
     assert StdoutLine("ok") in out
 
 
