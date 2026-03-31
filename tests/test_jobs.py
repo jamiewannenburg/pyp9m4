@@ -34,6 +34,7 @@ def test_job_status_snapshot_to_json_dict() -> None:
         duration_s=1.25,
     )
     d = job_status_snapshot_to_json_dict(p)
+    assert d == p.to_dict()
     assert d == {
         "lifecycle": "succeeded",
         "exit_code": 0,
@@ -54,6 +55,7 @@ def test_job_status_snapshot_to_json_dict() -> None:
         duration_s=None,
     )
     dm = job_status_snapshot_to_json_dict(m)
+    assert dm == m.to_dict()
     assert dm["models_found"] == 2
     assert dm["current_size_range"] == [2, 5]
     assert dm["domain_increment"] == 1

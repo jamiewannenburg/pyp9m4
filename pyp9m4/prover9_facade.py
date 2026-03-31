@@ -15,6 +15,7 @@ from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers.prover9 import Prover9Parsed, parse_prover9_output
 from pyp9m4.parsers.prover9_outcome import ProverOutcome, infer_prover_outcome
 from pyp9m4.resolver import BinaryResolver
+from pyp9m4.serialization import dataclass_to_json_dict
 from pyp9m4.runner import (
     AsyncToolRunner,
     RunStatus,
@@ -75,6 +76,10 @@ class Prover9ProofResult:
     exit_code: int | None
     lifecycle: JobLifecycle
     outcome: ProverOutcome
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly proof result (nested parsed structure, enums as strings)."""
+        return dataclass_to_json_dict(self)
 
 
 @dataclass

@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
+from pyp9m4.serialization import dataclass_to_json_dict
+
 T = TypeVar("T")
 
 
@@ -40,6 +42,10 @@ class ToolRunResult:
     stdout: str = ""
     stderr: str = ""
     command_cwd: Path | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly run outcome (:class:`RunStatus` as string, paths as ``str``)."""
+        return dataclass_to_json_dict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +80,10 @@ class SubprocessInvocation:
     errors: str = "replace"
     tee_stdout_path: Path | str | None = None
     tee_stderr_path: Path | str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly invocation (paths as ``str``, ``bytes`` stdin as base64)."""
+        return dataclass_to_json_dict(self)
 
 
 def _to_path(p: Path | str | None) -> Path | None:

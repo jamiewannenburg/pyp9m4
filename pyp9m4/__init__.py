@@ -4,7 +4,8 @@ Primary API: :class:`Prover9` and :class:`Mace4` (constructor defaults, per-call
 parsed results, streaming models, and optional background jobs with :func:`job_status_snapshot_to_json_dict`).
 
 Lower-level pieces remain available for custom pipelines — see :mod:`pyp9m4.resolver` and
-:mod:`pyp9m4.runner`.
+:mod:`pyp9m4.runner`. Use :func:`dataclass_to_json_dict` / :func:`jsonify_for_api` or each type’s
+:meth:`~object.to_dict` for JSON APIs.
 """
 
 from pyp9m4.jobs import (
@@ -17,6 +18,7 @@ from pyp9m4.jobs import (
     is_job_lifecycle_string,
     job_status_snapshot_to_json_dict,
 )
+from pyp9m4.serialization import dataclass_to_json_dict, jsonify_for_api
 from pyp9m4.mace4_facade import Mace4, Mace4SearchHandle
 from pyp9m4.parsers import (
     ParseWarning,
@@ -68,6 +70,8 @@ __all__ = [
     "Mace4JobStatusSnapshot",
     "is_job_lifecycle_string",
     "job_status_snapshot_to_json_dict",
+    "dataclass_to_json_dict",
+    "jsonify_for_api",
     # Parsers
     "ParseWarning",
     "parse_prover9_output",

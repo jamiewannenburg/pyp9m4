@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import enum
 from collections.abc import AsyncIterator
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
+
+from pyp9m4.serialization import dataclass_to_json_dict
 
 JobLifecycle = Literal["pending", "running", "succeeded", "failed", "timed_out", "cancelled"]
 
@@ -33,7 +35,7 @@ _JOB_LIFECYCLE_VALUES: frozenset[str] = frozenset(m.value for m in JobLifecycleP
 class Prover9JobStatusSnapshot:
     """Immutable snapshot from :meth:`~pyp9m4.prover9_facade.Prover9ProofHandle.status`.
 
-    Suitable for JSON APIs (see :func:`job_status_snapshot_to_json_dict`). Call :meth:`!status`
+    Suitable for JSON APIs (see :meth:`to_dict` / :func:`job_status_snapshot_to_json_dict`). Call :meth:`!status`
     from the same :mod:`asyncio` event loop that started the job.
     """
 
@@ -45,13 +47,18 @@ class Prover9JobStatusSnapshot:
     duration_s: float | None = None
     """Wall time for the subprocess run, when the job has finished; else ``None``."""
 
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly snapshot (lists instead of tuples)."""
+        return dataclass_to_json_dict(self)
+
 
 @dataclass(frozen=True, slots=True)
 class Mace4JobStatusSnapshot:
     """Immutable snapshot from :meth:`~pyp9m4.mace4_facade.Mace4SearchHandle.status`.
 
     Progress fields are best-effort (parsed from Mace4 output and CLI options), not full solver
-    state. Call :meth:`!status` from the same :mod:`asyncio` event loop that started the job.
+    state. For JSON, use :meth:`to_dict` or :func:`job_status_snapshot_to_json_dict`. Call :meth:`!status`
+    from the same :mod:`asyncio` event loop that started the job.
     """
 
     lifecycle: JobLifecycle
@@ -70,26 +77,21 @@ class Mace4JobStatusSnapshot:
     duration_s: float | None = None
     """Wall time for the search (pipeline included when isomorphic filtering is on), when finished."""
 
-
-def _jsonify_for_api(obj: Any) -> Any:
-    """Recursively map tuples to lists for JSON serialization."""
-    if isinstance(obj, tuple):
-        return [_jsonify_for_api(x) for x in obj]
-    if isinstance(obj, list):
-        return [_jsonify_for_api(x) for x in obj]
-    if isinstance(obj, dict):
-        return {k: _jsonify_for_api(v) for k, v in obj.items()}
-    return obj
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly snapshot (lists instead of tuples)."""
+        return dataclass_to_json_dict(self)
 
 
 def job_status_snapshot_to_json_dict(
     snapshot: Prover9JobStatusSnapshot | Mace4JobStatusSnapshot,
 ) -> dict[str, Any]:
-    """Convert a status snapshot to JSON-friendly primitives (lists instead of tuples)."""
-    if not is_dataclass(snapshot):
+    """Convert a status snapshot to JSON-friendly primitives (lists instead of tuples).
+
+    Equivalent to :meth:`Prover9JobStatusSnapshot.to_dict` / :meth:`Mace4JobStatusSnapshot.to_dict`.
+    """
+    if not isinstance(snapshot, (Prover9JobStatusSnapshot, Mace4JobStatusSnapshot)):
         raise TypeError("expected a job status snapshot dataclass instance")
-    raw = asdict(snapshot)
-    return _jsonify_for_api(raw)  # type: ignore[return-value]
+    return snapshot.to_dict()
 
 
 @runtime_checkable
