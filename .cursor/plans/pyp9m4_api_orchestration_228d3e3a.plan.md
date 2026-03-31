@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: pipeline-facades
     content: Add Isofilter/Interpformat/Prooftrans facade classes with arun + structured results; register in ToolRegistry
-    status: pending
+    status: completed
   - id: unified-arun
     content: Implement ToolRegistry + async arun(program, input, options) delegating to facades
     status: pending

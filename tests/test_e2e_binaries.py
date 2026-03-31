@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from pyp9m4 import Mace4, Prover9, ProverOutcome
+from pyp9m4 import Interpformat, Isofilter, Mace4, Prooftrans, Prover9, ProverOutcome, arun
+from pyp9m4.options.interpformat import InterpformatCliOptions
 from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers import parse_prover9_output
 from pyp9m4.parsers.mace4 import extract_interpretation_blocks, parse_mace4_output
@@ -150,3 +151,55 @@ def test_e2e_isofilter_accepts_interpretation(resolver: BinaryResolver) -> None:
     r2 = run_sync(SubprocessInvocation(argv=(str(iso),), stdin=body, timeout_s=120))
     assert r2.status == RunStatus.SUCCEEDED
     assert r2.exit_code == 0
+
+
+@pytest.mark.integration
+def test_e2e_pipeline_facade_prooftrans(resolver: BinaryResolver) -> None:
+    inp = _CORPUS / "trivial.in"
+    p9 = Prover9(resolver=resolver, timeout_s=120)
+    pr = p9.run(options=Prover9CliOptions(input_files=(str(inp),)))
+    pt = Prooftrans(resolver=resolver, timeout_s=120)
+    out = pt.run(pr.stdout)
+    assert out.lifecycle == "succeeded"
+    assert out.exit_code == 0
+    assert "PROOF" in out.stdout or "proof" in out.stdout.lower()
+
+
+@pytest.mark.integration
+def test_e2e_pipeline_facade_interpformat(resolver: BinaryResolver) -> None:
+    m4 = resolver.resolve("mace4")
+    text = (_CORPUS / "mace4_sat.in").read_text(encoding="utf-8")
+    r1 = run_sync(SubprocessInvocation(argv=(str(m4), "-n", "2"), stdin=text, timeout_s=120))
+    assert r1.status == RunStatus.SUCCEEDED
+    ifc = Interpformat(resolver=resolver, timeout_s=120)
+    out = ifc.run(r1.stdout, options=InterpformatCliOptions(style="portable"))
+    assert out.lifecycle == "succeeded"
+    assert "[" in out.stdout and "]" in out.stdout
+
+
+@pytest.mark.integration
+def test_e2e_pipeline_facade_isofilter(resolver: BinaryResolver) -> None:
+    m4 = resolver.resolve("mace4")
+    text = (_CORPUS / "mace4_sat.in").read_text(encoding="utf-8")
+    r1 = run_sync(SubprocessInvocation(argv=(str(m4), "-n", "2"), stdin=text, timeout_s=120))
+    assert r1.status == RunStatus.SUCCEEDED
+    blocks = extract_interpretation_blocks(r1.stdout)
+    assert len(blocks) >= 1
+    body = blocks[0].rstrip()
+    if not body.endswith("."):
+        body += "."
+    iso = Isofilter(resolver=resolver, timeout_s=120)
+    out = iso.run(body)
+    assert out.lifecycle == "succeeded"
+    assert out.exit_code == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_e2e_toolkit_arun_prooftrans(resolver: BinaryResolver) -> None:
+    inp = _CORPUS / "trivial.in"
+    p9 = Prover9(resolver=resolver, timeout_s=120)
+    pr = p9.run(options=Prover9CliOptions(input_files=(str(inp),)))
+    out = await arun("pt", pr.stdout, resolver=resolver, timeout_s=120)
+    assert out.lifecycle == "succeeded"
+    assert out.exit_code == 0
