@@ -174,3 +174,30 @@ async def test_stdin_string() -> None:
     inv = SubprocessInvocation(argv=_py(code), stdin="hello\n")
     res = await r.run(inv)
     assert res.stdout.strip() == "hello"
+
+
+@pytest.mark.asyncio
+async def test_run_fallback_when_async_subprocess_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _raise_not_implemented(*args: object, **kwargs: object):
+        raise NotImplementedError
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _raise_not_implemented)
+
+    r = AsyncToolRunner()
+    inv = SubprocessInvocation(argv=_py("print('fallback-ok')"))
+    res = await r.run(inv)
+    assert res.status == RunStatus.SUCCEEDED
+    assert res.stdout.strip() == "fallback-ok"
+
+
+@pytest.mark.asyncio
+async def test_run_fallback_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _raise_not_implemented(*args: object, **kwargs: object):
+        raise NotImplementedError
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _raise_not_implemented)
+
+    r = AsyncToolRunner()
+    inv = SubprocessInvocation(argv=_py("import time; time.sleep(10)"), timeout_s=0.1)
+    res = await r.run(inv)
+    assert res.status == RunStatus.TIMED_OUT

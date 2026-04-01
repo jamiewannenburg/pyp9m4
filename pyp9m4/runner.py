@@ -8,6 +8,7 @@ import contextlib
 import enum
 import inspect
 import os
+import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -98,6 +99,19 @@ def _stdin_bytes(stdin: str | bytes | None, *, encoding: str, errors: str) -> by
     if isinstance(stdin, bytes):
         return stdin
     return stdin.encode(encoding, errors=errors)
+
+
+def _decode_lines(data: bytes, *, encoding: str, errors: str) -> list[str]:
+    if not data:
+        return []
+    return data.decode(encoding, errors=errors).splitlines()
+
+
+def _loop_debug_name() -> str:
+    with contextlib.suppress(RuntimeError):
+        loop = asyncio.get_running_loop()
+        return type(loop).__name__
+    return "<no running loop>"
 
 
 async def _async_terminate(proc: asyncio.subprocess.Process) -> None:
@@ -259,14 +273,29 @@ class AsyncToolRunner:
         proc: asyncio.subprocess.Process | None = None
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv_os,
-                stdin=asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=os.fspath(cwd) if cwd is not None else None,
-                env=dict(inv.env) if inv.env is not None else None,
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv_os,
+                    stdin=asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=os.fspath(cwd) if cwd is not None else None,
+                    env=dict(inv.env) if inv.env is not None else None,
+                )
+            except NotImplementedError:
+                # Windows selector-based loops cannot create subprocess transports.
+                # Fall back to a thread-executed sync subprocess path.
+                res = await self._execute_blocking_fallback(
+                    inv=inv,
+                    argv_os=argv_os,
+                    cwd=cwd,
+                    stdin_data=stdin_data,
+                    line_handlers=line_handlers,
+                    tee_out_f=tee_out_f,
+                    tee_err_f=tee_err_f,
+                    start=start,
+                )
+                return res
 
             async def pump_stdout() -> None:
                 assert proc is not None and proc.stdout is not None
@@ -357,6 +386,110 @@ class AsyncToolRunner:
                 tee_err_f.close()
 
         duration = time.perf_counter() - start
+        return ToolRunResult(
+            status=status,
+            argv=tuple(inv.argv),
+            exit_code=exit_code,
+            duration_s=duration,
+            command_cwd=cwd,
+        )
+
+    async def _execute_blocking_fallback(
+        self,
+        *,
+        inv: SubprocessInvocation,
+        argv_os: tuple[str, ...],
+        cwd: Path | None,
+        stdin_data: bytes | None,
+        line_handlers: tuple[
+            Callable[[str], Awaitable[None]],
+            Callable[[str], Awaitable[None]],
+        ],
+        tee_out_f: Any,
+        tee_err_f: Any,
+        start: float,
+    ) -> ToolRunResult:
+        holder: dict[str, subprocess.Popen[bytes]] = {}
+
+        def _run_blocking() -> tuple[int | None, bool, bytes, bytes]:
+            proc = subprocess.Popen(
+                argv_os,
+                stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=os.fspath(cwd) if cwd is not None else None,
+                env=dict(inv.env) if inv.env is not None else None,
+            )
+            holder["proc"] = proc
+            try:
+                out_b, err_b = proc.communicate(input=stdin_data, timeout=inv.timeout_s)
+                return proc.returncode, False, out_b or b"", err_b or b""
+            except subprocess.TimeoutExpired as exc:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.terminate()
+                try:
+                    out_b, err_b = proc.communicate(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                    out_b, err_b = proc.communicate()
+                if exc.stdout:
+                    out_b = exc.stdout + (out_b or b"")
+                if exc.stderr:
+                    err_b = exc.stderr + (err_b or b"")
+                return proc.returncode, True, out_b or b"", err_b or b""
+
+        task = asyncio.create_task(asyncio.to_thread(_run_blocking))
+        try:
+            exit_code, timed_out, out_b, err_b = await task
+        except asyncio.CancelledError:
+            proc = holder.get("proc")
+            if proc is not None and proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.terminate()
+                try:
+                    await asyncio.to_thread(proc.wait, 3.0)
+                except subprocess.TimeoutExpired:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                    with contextlib.suppress(Exception):
+                        await asyncio.to_thread(proc.wait)
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(Exception):
+                    await task
+            duration = time.perf_counter() - start
+            return ToolRunResult(
+                status=RunStatus.CANCELLED,
+                argv=tuple(inv.argv),
+                exit_code=proc.returncode if proc is not None else None,
+                duration_s=duration,
+                command_cwd=cwd,
+            )
+        except Exception as exc:
+            loop_name = _loop_debug_name()
+            raise RuntimeError(
+                "Async subprocess transport unavailable and fallback failed. "
+                f"Running loop={loop_name!r}. On Windows, subprocess support requires a "
+                "Proactor-capable loop."
+            ) from exc
+
+        for line in _decode_lines(out_b, encoding=inv.encoding, errors=inv.errors):
+            if tee_out_f is not None:
+                tee_out_f.write(line + "\n")
+                tee_out_f.flush()
+            await line_handlers[0](line)
+        for line in _decode_lines(err_b, encoding=inv.encoding, errors=inv.errors):
+            if tee_err_f is not None:
+                tee_err_f.write(line + "\n")
+                tee_err_f.flush()
+            await line_handlers[1](line)
+
+        duration = time.perf_counter() - start
+        if timed_out:
+            status = RunStatus.TIMED_OUT
+        else:
+            status = RunStatus.SUCCEEDED if exit_code == 0 else RunStatus.FAILED
         return ToolRunResult(
             status=status,
             argv=tuple(inv.argv),
