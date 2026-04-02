@@ -15,7 +15,7 @@ from pyp9m4.options.isofilter import IsofilterCliOptions
 from pyp9m4.options.mace4 import Mace4CliOptions
 from pyp9m4.options.prooftrans import ProofTransCliOptions
 from pyp9m4.options.prover9 import Prover9CliOptions
-from pyp9m4.parsers.mace4 import Mace4Interpretation
+from pyp9m4.parsers.mace4 import Mace4Interpretation, parse_mace4_output
 from pyp9m4.pipeline_facades import (
     Interpformat,
     Isofilter,
@@ -266,10 +266,34 @@ async def arun(
 
     if name == "mace4":
         opts = _as_mace4_options(options)
-        models: list[Mace4Interpretation] = []
-        async for mi in reg.mace4.amodels(input, options=opts, **kwargs):
-            models.append(mi)
-        return ToolRunEnvelope(program="mace4", raw=None, mace4_models=tuple(models))
+        m4 = reg.mace4
+        eff, timeout_s, elim = m4._effective_options(options=opts, kwargs=dict(kwargs))
+        stdin = input
+        if isinstance(stdin, Path):
+            stdin = stdin.read_bytes()
+        if isinstance(stdin, bytes):
+            stdin = stdin.decode(m4._encoding, errors=m4._errors)
+
+        if elim:
+            st, code, out, err, interps = await m4._arun_isomorphic_pipeline(
+                stdin,
+                eff,
+                timeout_s=timeout_s,
+            )
+            raw = ToolRunResult(
+                status=st,
+                argv=(),
+                exit_code=code,
+                duration_s=0.0,
+                stdout=out,
+                stderr=err,
+            )
+            return ToolRunEnvelope(program="mace4", raw=raw, mace4_models=interps)
+
+        inv = m4._build_inv(eff, stdin=stdin, timeout_s=timeout_s)
+        res = await AsyncToolRunner().run(inv)
+        models = parse_mace4_output(res.stdout).interpretations
+        return ToolRunEnvelope(program="mace4", raw=res, mace4_models=tuple(models))
 
     if name == "isofilter":
         opts = _as_isofilter_options(options)

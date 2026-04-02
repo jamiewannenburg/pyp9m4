@@ -121,6 +121,28 @@ async def test_arun_dispatches_prover9_mocked(monkeypatch: pytest.MonkeyPatch) -
     assert env.raw.stdout == "ok"
 
 
+@pytest.mark.asyncio
+async def test_arun_dispatches_mace4_with_raw_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run(self: AsyncToolRunner, inv) -> ToolRunResult:
+        return ToolRunResult(
+            status=RunStatus.SUCCEEDED,
+            argv=inv.argv,
+            exit_code=0,
+            duration_s=0.01,
+            stdout="interpretation(1, [number=1, seconds=0], []).\n",
+            stderr="mace4 stderr",
+        )
+
+    monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
+    env = await arun("mace4", "formulas(assumptions).\nend_of_list.\n")
+    assert isinstance(env, ToolRunEnvelope)
+    assert env.program == "mace4"
+    assert env.raw is not None
+    assert env.raw.stdout.startswith("interpretation(")
+    assert env.raw.stderr == "mace4 stderr"
+    assert env.mace4_models is not None
+
+
 def test_prooftrans_run_sync_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_run(self: AsyncToolRunner, inv) -> ToolRunResult:
         return ToolRunResult(
