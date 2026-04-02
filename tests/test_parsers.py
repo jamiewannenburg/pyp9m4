@@ -80,6 +80,7 @@ interpretation( 2, [
 """
     blocks = extract_interpretation_blocks(sample)
     assert len(blocks) == 1
+    assert blocks[0].rstrip().endswith(".")
     p = parse_mace4_output(sample)
     assert len(p.interpretations) == 1
     mi = p.interpretations[0]

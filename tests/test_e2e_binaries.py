@@ -146,8 +146,7 @@ def test_e2e_isofilter_accepts_interpretation(resolver: BinaryResolver) -> None:
     blocks = extract_interpretation_blocks(r1.stdout)
     assert len(blocks) >= 1
     body = blocks[0].rstrip()
-    if not body.endswith("."):
-        body += "."
+    assert body.endswith(".")
     r2 = run_sync(SubprocessInvocation(argv=(str(iso),), stdin=body, timeout_s=120))
     assert r2.status == RunStatus.SUCCEEDED
     assert r2.exit_code == 0
@@ -186,8 +185,7 @@ def test_e2e_pipeline_facade_isofilter(resolver: BinaryResolver) -> None:
     blocks = extract_interpretation_blocks(r1.stdout)
     assert len(blocks) >= 1
     body = blocks[0].rstrip()
-    if not body.endswith("."):
-        body += "."
+    assert body.endswith(".")
     iso = Isofilter(resolver=resolver, timeout_s=120)
     out = iso.run(body)
     assert out.lifecycle == "succeeded"

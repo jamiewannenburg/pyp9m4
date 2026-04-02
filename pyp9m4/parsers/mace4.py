@@ -52,11 +52,19 @@ def _try_extract_next_interpretation(s: str, pos: int = 0) -> tuple[str, int] | 
         close = _matching_close_paren(s, open_paren)
         if close is None:
             return None
-        return (s[i : close + 1], close + 1)
+        end = close + 1
+        # LADR term reader expects a terminating period after the interpretation term.
+        # Mace4 prints it as `interpretation(...).`, but our balanced-paren scan would
+        # otherwise stop at `)` and drop the dot.
+        if end < len(s) and s[end] == ".":
+            end += 1
+        return (s[i:end], end)
 
 
 def extract_interpretation_blocks(text: str) -> tuple[str, ...]:
-    """Return each complete ``interpretation(...)`` substring (outermost parentheses).
+    """Return each complete ``interpretation(...)`` term substring.
+
+    If Mace4 printed a terminating period (i.e. `interpretation(...).`), include it too.
 
     Only balanced blocks are returned; a trailing incomplete ``interpretation(``… is ignored
     until closed (e.g. when using :class:`Mace4InterpretationBuffer` across chunks).
