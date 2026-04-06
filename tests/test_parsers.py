@@ -11,6 +11,7 @@ from pyp9m4.parsers.common import parse_equals_key_values, split_ladr_section_bl
 from pyp9m4.parsers.mace4 import (
     Mace4InterpretationBuffer,
     extract_interpretation_blocks,
+    format_mace4_interpretation,
     parse_mace4_output,
 )
 from pyp9m4.parsers.pipeline import inspect_pipeline_text, parse_pipeline_tool_output
@@ -66,6 +67,51 @@ two
     sections, warns = split_ladr_section_blocks(text)
     assert sections["A"].strip() == "two"
     assert any(w.message == "duplicate_section_title" for w in warns)
+
+
+def test_mace4_format_interpretation_round_trip() -> None:
+    sample = """
+interpretation( 2, [
+   function = c1 = 0,
+   function = f(0) = 1,
+   relation = R(0,0) = 1,
+]).
+"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    out = format_mace4_interpretation(mi)
+    mi2 = parse_mace4_output(out).interpretations[0]
+    assert mi2.domain_size == mi.domain_size == 2
+    assert mi2.function_entries == mi.function_entries
+    assert mi2.relation_entries == mi.relation_entries
+
+
+def test_mace4_format_interpretation_list_style_round_trip() -> None:
+    sample = """
+interpretation( 3, [number=1], [
+        function(f, [ 0, 1, 2 ]),
+        relation(R(_,_), [1,0,0, 0,1,0, 0,0,1])
+]).
+"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    out = format_mace4_interpretation(mi)
+    mi2 = parse_mace4_output(out).interpretations[0]
+    assert mi2.domain_size == 3
+    assert mi2.function_entries == mi.function_entries
+    assert mi2.relation_entries == mi.relation_entries
+
+
+def test_mace4_format_interpretation_requires_domain() -> None:
+    sample = """
+interpretation( x, [
+   function = c1 = 0,
+]).
+"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    assert mi.domain_size is None
+    with pytest.raises(ValueError, match="domain_size"):
+        format_mace4_interpretation(mi)
+    s = format_mace4_interpretation(mi, domain_size=1)
+    assert "interpretation(1" in s
 
 
 def test_mace4_interpretation_block() -> None:

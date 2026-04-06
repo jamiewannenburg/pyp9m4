@@ -7,6 +7,7 @@ from pyp9m4.parsers.mace4 import (
     Mace4Parsed,
     StandardAssignment,
     extract_interpretation_blocks,
+    format_mace4_interpretation,
     parse_mace4_output,
 )
 from pyp9m4.parsers.pipeline import (
@@ -31,6 +32,7 @@ __all__ = [
     "infer_prover_outcome",
     "StandardAssignment",
     "extract_interpretation_blocks",
+    "format_mace4_interpretation",
     "inspect_pipeline_text",
     "match_section_title_line",
     "parse_equals_key_values",

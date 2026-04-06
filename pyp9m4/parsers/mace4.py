@@ -1018,6 +1018,58 @@ def _try_parse_portable(text: str) -> tuple[tuple[object, ...], tuple[ParseWarni
     return ((obj,), tuple(warnings))
 
 
+def _format_mace4_symbol_application(name: str, args: tuple[int, ...]) -> str:
+    """Format ``name`` or ``name(a1,a2,...)`` for standard assignment lines."""
+    if not args:
+        return name
+    return f"{name}({','.join(str(x) for x in args)})"
+
+
+def format_mace4_interpretation(
+    mi: Mace4Interpretation,
+    *,
+    domain_size: int | None = None,
+    indent: str = "   ",
+    terminal_period: bool = True,
+    trailing_newline: bool = True,
+) -> str:
+    """Serialize :class:`Mace4Interpretation` to a Mace4 ``interpretation(...)`` text block.
+
+    Emits **standard** assignment lines (``function = … = …`` / ``relation = … = …``) that
+    :func:`parse_mace4_output` reads — the inverse of parsing those blocks into
+    :class:`Mace4Interpretation` (tables are written in sorted order; list-style-only
+    originals become standard form).
+
+    The result is suitable for appending to an ``.out`` file or passing to LADR tools that
+    expect a terminating period after the interpretation term.
+
+    :param mi: Model to serialize.
+    :param domain_size: Override domain size (default: ``mi.domain_size``). Required if the
+        model has no stored domain size.
+    :param indent: Line prefix for each assignment (default three spaces, matching Mace4).
+    :param terminal_period: If true, end with ``.`` (LADR term reader expectation).
+    :param trailing_newline: If true, end the string with ``\\n``.
+    :raises ValueError: if no domain size is available.
+    """
+    d = mi.domain_size if domain_size is None else domain_size
+    if d is None:
+        raise ValueError("domain_size is unknown; pass domain_size=… or set mi.domain_size")
+
+    lines: list[str] = [f"interpretation({d}, ["]
+    for name, args, val in mi.function_entries:
+        lhs = _format_mace4_symbol_application(name, args)
+        lines.append(f"{indent}function = {lhs} = {val},")
+    for name, args, holds in mi.relation_entries:
+        lhs = _format_mace4_symbol_application(name, args)
+        lines.append(f"{indent}relation = {lhs} = {1 if holds else 0},")
+    close = "])." if terminal_period else "])"
+    lines.append(close)
+    body = "\n".join(lines)
+    if trailing_newline:
+        return body + "\n"
+    return body
+
+
 def parse_mace4_output(text: str) -> Mace4Parsed:
     """Parse Mace4 text: LADR section blocks, ``interpretation`` structures, optional portable list.
 
