@@ -42,9 +42,12 @@ async def test_pipeline_isofilter_interpformat_mocked(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
 
-    r = await pipeline("% model\n").run("isofilter").pipe("interpformat").execute()
+    r = await pipeline("% model\n").run("isofilter").pipe("interpformat").execute(
+        stream_intermediate=False,
+    )
 
     assert isinstance(r, ChainResult)
+    assert r.stream_intermediate is False
     assert len(r.steps) == 2
     assert r.steps[0].program == "isofilter"
     assert r.steps[1].program == "interpformat"
@@ -57,7 +60,38 @@ async def test_pipeline_isofilter_interpformat_mocked(monkeypatch: pytest.Monkey
 
     d = r.to_dict()
     assert d["final_stdout"] == "after_ifc\n"
+    assert d["stream_intermediate"] is False
     assert len(d["steps"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_pipeline_streaming_run_pipe_chain_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_chain(
+        self: AsyncToolRunner,
+        invs: object,
+        *,
+        initial_stdin: object = None,
+        timeout_s: object = None,
+        accumulate_last_stdout: bool = True,
+        on_last_stdout_line: object = None,
+        last_stdout_path: object = None,
+        on_last_stdout_chunk: object = None,
+    ) -> tuple[object, ...]:
+        assert len(invs) == 2
+        return (
+            RunStatus.SUCCEEDED,
+            0,
+            "iso_out\n",
+            "",
+            ("", ""),
+        )
+
+    monkeypatch.setattr(AsyncToolRunner, "run_pipe_chain", fake_chain)
+
+    r = await pipeline("input.").run("mace4").pipe("isofilter").execute(stream_intermediate=True)
+    assert r.stream_intermediate is True
+    assert r.final_stdout == "iso_out\n"
+    assert len(r.steps) == 2
 
 
 @pytest.mark.asyncio
@@ -94,7 +128,7 @@ async def test_pipeline_mace4_then_isofilter_mocked(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
 
-    r = await pipeline("input.").run("mace4").pipe("isofilter").execute()
+    r = await pipeline("input.").run("mace4").pipe("isofilter").execute(stream_intermediate=False)
     assert r.final_stdout == "iso_out\n"
     assert len(r.steps) == 2
     assert r.steps[0].envelope.program == "mace4"
@@ -117,7 +151,9 @@ async def test_pipeline_three_steps_mocked(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
 
-    r = await pipeline("x").run("isofilter").pipe("interpformat").pipe("prooftrans").execute()
+    r = await pipeline("x").run("isofilter").pipe("interpformat").pipe("prooftrans").execute(
+        stream_intermediate=False,
+    )
     assert len(r.steps) == 3
     assert r.steps[2].program == "prooftrans"
     assert r.final_stdout == "out_prooftrans\n"

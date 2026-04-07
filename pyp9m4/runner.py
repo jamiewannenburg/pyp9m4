@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import concurrent.futures
 import contextlib
 import enum
@@ -237,6 +238,219 @@ class AsyncToolRunner:
         exc = task.exception()
         if exc is not None:
             raise exc
+
+    async def run_pipe_chain(
+        self,
+        invs: list[SubprocessInvocation],
+        *,
+        initial_stdin: str | bytes | None,
+        timeout_s: float | None = None,
+        accumulate_last_stdout: bool = True,
+        on_last_stdout_line: Callable[[str], Awaitable[None] | None] | None = None,
+        last_stdout_path: Path | str | None = None,
+        on_last_stdout_chunk: Callable[[bytes], Awaitable[None] | None] | None = None,
+    ) -> tuple[RunStatus, int | None, str, str, tuple[str, ...]]:
+        """Run ``invs[0] | invs[1] | ...`` with byte-sized pumps (no full intermediate buffers).
+
+        The last process stdout is consumed line-by-line unless ``on_last_stdout_chunk`` is set,
+        in which case it is read in fixed-size chunks (for incremental decoding / parsing).
+
+        Returns ``(status, exit_code, last_stdout, last_stderr, stderr_per_inv)``.
+        ``last_stderr`` is the last process's stderr only; ``stderr_per_inv`` has one string per
+        invocation (possibly empty).
+        """
+        if not invs:
+            raise ValueError("run_pipe_chain: invs must be non-empty")
+
+        encoding = invs[0].encoding
+        errors = invs[0].errors
+
+        eff_timeout = timeout_s
+        if eff_timeout is None:
+            timeouts = [inv.timeout_s for inv in invs if inv.timeout_s is not None]
+            eff_timeout = max(timeouts) if timeouts else None
+
+        stdin_data = _stdin_bytes(initial_stdin, encoding=encoding, errors=errors)
+        procs: list[asyncio.subprocess.Process] = []
+
+        async def _terminate_all() -> None:
+            for p in procs:
+                await _async_terminate(p)
+
+        try:
+            try:
+                for i, inv in enumerate(invs):
+                    argv_os = tuple(os.fsdecode(os.fsencode(a)) for a in inv.argv)
+                    cwd_p: str | None = None
+                    if inv.cwd is not None:
+                        cwd_p = os.fspath(Path(inv.cwd).resolve())
+                    if i > 0:
+                        stdin_arg = asyncio.subprocess.PIPE
+                    elif stdin_data is not None:
+                        stdin_arg = asyncio.subprocess.PIPE
+                    else:
+                        stdin_arg = asyncio.subprocess.DEVNULL
+                    proc = await asyncio.create_subprocess_exec(
+                        *argv_os,
+                        stdin=stdin_arg,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=cwd_p,
+                        env=dict(inv.env) if inv.env is not None else None,
+                    )
+                    procs.append(proc)
+            except NotImplementedError:
+                raise RuntimeError(
+                    "asyncio subprocess transport unavailable for pipe chain. "
+                    "On Windows, use a Proactor event loop, or set stream_intermediate=False "
+                    "on the pipeline builder."
+                ) from None
+
+            n = len(procs)
+            assert n == len(invs)
+
+            async def feed_first() -> None:
+                if stdin_data is None or procs[0].stdin is None:
+                    return
+                w = procs[0].stdin
+                w.write(stdin_data)
+                await w.drain()
+                w.close()
+                await w.wait_closed()
+
+            async def pump_to_next(i: int) -> None:
+                src = procs[i].stdout
+                dst = procs[i + 1].stdin
+                assert src is not None and dst is not None
+                try:
+                    while True:
+                        chunk = await src.read(65536)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                        await dst.drain()
+                finally:
+                    dst.close()
+                    with contextlib.suppress(Exception):
+                        await dst.wait_closed()
+
+            async def drain_stderr_idx(i: int) -> str:
+                p = procs[i]
+                assert p.stderr is not None
+                lines: list[str] = []
+                while True:
+                    raw = await p.stderr.readline()
+                    if not raw:
+                        break
+                    lines.append(raw.decode(encoding, errors=errors).rstrip("\r\n"))
+                return "\n".join(lines)
+
+            async def drain_last_stdout_lines() -> str:
+                p = procs[-1]
+                assert p.stdout is not None
+                acc: list[str] = []
+                f = None
+                if last_stdout_path is not None:
+                    pth = Path(last_stdout_path)
+                    pth.parent.mkdir(parents=True, exist_ok=True)
+                    f = pth.open("a", encoding=encoding, errors=errors)
+                try:
+                    while True:
+                        raw = await p.stdout.readline()
+                        if not raw:
+                            break
+                        line = raw.decode(encoding, errors=errors).rstrip("\r\n")
+                        if accumulate_last_stdout:
+                            acc.append(line)
+                        if on_last_stdout_line is not None:
+                            r = on_last_stdout_line(line)
+                            if inspect.isawaitable(r):
+                                await r
+                        if f is not None:
+                            f.write(line + "\n")
+                            f.flush()
+                finally:
+                    if f is not None:
+                        f.close()
+                return "\n".join(acc) if accumulate_last_stdout else ""
+
+            async def drain_last_stdout_chunks() -> str:
+                p = procs[-1]
+                assert p.stdout is not None
+                decoder = codecs.getincrementaldecoder(encoding)(errors)
+                text_parts: list[str] = []
+                f = None
+                if last_stdout_path is not None:
+                    pth = Path(last_stdout_path)
+                    pth.parent.mkdir(parents=True, exist_ok=True)
+                    f = pth.open("ab")
+                try:
+                    while True:
+                        chunk = await p.stdout.read(65536)
+                        if not chunk:
+                            break
+                        if on_last_stdout_chunk is not None:
+                            r = on_last_stdout_chunk(chunk)
+                            if inspect.isawaitable(r):
+                                await r
+                        if accumulate_last_stdout:
+                            text_parts.append(decoder.decode(chunk))
+                        if f is not None:
+                            f.write(chunk)
+                            f.flush()
+                    text_parts.append(decoder.decode(b"", final=True))
+                    if on_last_stdout_chunk is not None:
+                        r = on_last_stdout_chunk(b"")
+                        if inspect.isawaitable(r):
+                            await r
+                finally:
+                    if f is not None:
+                        f.close()
+                return "".join(text_parts) if accumulate_last_stdout else ""
+
+            all_tasks: list[asyncio.Task[Any]] = [
+                asyncio.create_task(feed_first()),
+                *[asyncio.create_task(pump_to_next(i)) for i in range(n - 1)],
+                *[asyncio.create_task(drain_stderr_idx(i)) for i in range(n)],
+                asyncio.create_task(
+                    drain_last_stdout_chunks()
+                    if on_last_stdout_chunk is not None
+                    else drain_last_stdout_lines()
+                ),
+            ]
+            try:
+                if eff_timeout is not None:
+                    results = await asyncio.wait_for(asyncio.gather(*all_tasks), timeout=eff_timeout)
+                else:
+                    results = await asyncio.gather(*all_tasks)
+            except asyncio.TimeoutError:
+                await _terminate_all()
+                return (
+                    RunStatus.TIMED_OUT,
+                    None,
+                    "",
+                    "",
+                    tuple("" for _ in invs),
+                )
+
+            await asyncio.gather(*(p.wait() for p in procs))
+
+            stderr_per_inv = tuple(results[n : 2 * n])
+            last_stdout_str = results[2 * n]
+            last_stderr = stderr_per_inv[-1]
+
+            exit_codes = [p.returncode for p in procs]
+            ok = all(c == 0 for c in exit_codes if c is not None)
+            status = RunStatus.SUCCEEDED if ok else RunStatus.FAILED
+            exit_code = exit_codes[-1]
+
+            return (status, exit_code, last_stdout_str, last_stderr, stderr_per_inv)
+        except asyncio.CancelledError:
+            await _terminate_all()
+            raise
+        except Exception:
+            await _terminate_all()
+            raise
 
     async def _execute(
         self,

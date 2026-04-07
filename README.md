@@ -173,6 +173,19 @@ Each tool has a dataclass with `to_argv()` returning fragments **after** the exe
 
 Facades merge these with constructor and call-time kwargs. With `eliminate_isomorphic=True`, Mace4 runs `mace4 | interpformat | isofilter` (models appear after the pipeline completes, not streamed across tools).
 
+## Multi-step pipeline (`pipeline`)
+
+`pipeline(...).run(...).pipe(...).execute()` chains tools by feeding each stage’s stdout to the next. **By default**, subprocesses are connected with 64 KiB byte pumps so intermediate stages do not buffer full stdout in Python. Pass `stream_intermediate=False` to restore the previous behaviour (each stage’s full stdout is collected before the next tool runs).
+
+For large final output, set `buffer_last_stdout=False` and use one or more of:
+
+- `last_stdout_path` — append (text lines by default; raw bytes when using chunk mode)
+- `on_last_stdout_line` — async callback per decoded stdout line
+- `on_last_stdout_chunk` — async callback per raw stdout chunk
+- `on_last_mace4_interpretation` — receive each completed standard `interpretation(...)` block incrementally (same incremental rules as `Mace4InterpretationBuffer`; portable list output is not supported incrementally)
+
+`ChainResult.stream_intermediate` is `True` when the streaming executor ran. Chains that include `clausetester` use buffered execution.
+
 ## Parsers
 
 - `parse_prover9_output(stdout)` — statistics, proof segments, warnings
