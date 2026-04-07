@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyp9m4"
-version = "0.1.4"
+version = "0.1.5"
 description = "Python wrapper for Prover9/Mace4 (LADR) binaries"
 requires-python = ">=3.10"
 dependencies = [
