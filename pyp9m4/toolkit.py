@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,55 +9,90 @@ from typing import Any
 
 from pyp9m4.jobs import JobLifecycle
 from pyp9m4.mace4_facade import Mace4
+from pyp9m4.options.clausefilter import ClausefilterCliOptions
+from pyp9m4.options.clausetester import ClausetesterCliOptions
+from pyp9m4.options.interpfilter import InterpfilterCliOptions
 from pyp9m4.options.interpformat import InterpformatCliOptions
 from pyp9m4.options.isofilter import IsofilterCliOptions
+from pyp9m4.options.ladr_to_tptp import LadrToTptpCliOptions
 from pyp9m4.options.mace4 import Mace4CliOptions
 from pyp9m4.options.prooftrans import ProofTransCliOptions
 from pyp9m4.options.prover9 import Prover9CliOptions
+from pyp9m4.options.renamer import RenamerCliOptions
+from pyp9m4.options.rewriter import RewriterCliOptions
+from pyp9m4.options.test_clause_eval import TestClauseEvalCliOptions
+from pyp9m4.options.tptp_to_ladr import TptpToLadrCliOptions
 from pyp9m4.parsers.mace4 import Mace4Interpretation, parse_mace4_output
 from pyp9m4.pipeline_facades import (
+    ClauseFilter,
+    ClauseTester,
+    InterpFilter,
     Interpformat,
     Isofilter,
+    Isofilter2,
+    LadrToTptp,
     PipelineToolResult,
     Prooftrans,
+    Renamer,
+    Rewriter,
+    TestClauseEval,
+    TptpToLadr,
 )
 from pyp9m4.prover9_facade import Prover9, Prover9ProofResult
-from pyp9m4.resolver import BinaryResolver, ToolName
-from pyp9m4.runner import AsyncToolRunner, RunStatus, SubprocessInvocation, ToolRunResult
+from pyp9m4.resolver import BinaryResolver, ToolName, UnknownToolError, normalize_resolver_tool_name
+from pyp9m4.runner import AsyncToolRunner, RunStatus, ToolRunResult
 from pyp9m4.serialization import dataclass_to_json_dict
 
-_TOOL_ALIASES: dict[str, ToolName] = {
-    "if": "isofilter",
-    "iso": "isofilter",
-    "interp": "interpformat",
-    "ifc": "interpformat",
-    "modelformat": "interpformat",
-    "pt": "prooftrans",
-}
+_ARUN_TOOLS: frozenset[str] = frozenset(
+    {
+        "prover9",
+        "mace4",
+        "isofilter",
+        "isofilter2",
+        "interpformat",
+        "prooftrans",
+        "interpfilter",
+        "clausefilter",
+        "clausetester",
+        "rewriter",
+        "tptp_to_ladr",
+        "ladr_to_tptp",
+        "renamer",
+        "test_clause_eval",
+    }
+)
 
 _PIPELINE_TOOL_NAMES: frozenset[ToolName] = frozenset(
-    ("isofilter", "interpformat", "prooftrans")  # type: ignore[assignment]
-)
+    (
+        "isofilter",
+        "isofilter2",
+        "interpformat",
+        "prooftrans",
+        "interpfilter",
+        "clausefilter",
+        "clausetester",
+        "rewriter",
+        "tptp_to_ladr",
+        "ladr_to_tptp",
+        "renamer",
+        "test_clause_eval",
+    )
+)  # type: ignore[assignment]
 
-_ALL_REGISTERED: frozenset[ToolName] = frozenset(
-    ("prover9", "mace4", "isofilter", "interpformat", "prooftrans", "clausetester")  # type: ignore[assignment]
-)
+_ALL_REGISTERED: frozenset[ToolName] = frozenset(_ARUN_TOOLS)  # type: ignore[assignment]
 
 
 def normalize_tool_name(name: str) -> ToolName:
-    """Normalize user input (case, common aliases) to a :data:`~pyp9m4.resolver.ToolName` literal."""
-    n = name.strip().lower()
-    n = _TOOL_ALIASES.get(n, n)
-    if n not in (
-        "prover9",
-        "mace4",
-        "interpformat",
-        "isofilter",
-        "prooftrans",
-        "clausetester",
-    ):
-        raise ValueError(f"unknown tool name: {name!r}")
-    return n  # type: ignore[return-value]
+    """Normalize user input to a :data:`~pyp9m4.resolver.ToolName` supported by :func:`arun`."""
+    try:
+        key = normalize_resolver_tool_name(name)
+    except UnknownToolError as e:
+        raise ValueError(str(e)) from e
+    if key not in _ARUN_TOOLS:
+        raise ValueError(
+            f"unknown tool name: {name!r} (not supported by arun; supported: {', '.join(sorted(_ARUN_TOOLS))})"
+        )
+    return key
 
 
 def _as_prover9_options(
@@ -121,6 +155,126 @@ def _as_prooftrans_options(
     raise TypeError(f"expected ProofTransCliOptions or mapping, got {type(options).__name__}")
 
 
+def _as_interpfilter_options(
+    options: InterpfilterCliOptions | Mapping[str, Any] | None,
+) -> InterpfilterCliOptions:
+    if options is None:
+        return InterpfilterCliOptions()
+    if isinstance(options, InterpfilterCliOptions):
+        return options
+    if isinstance(options, Mapping):
+        raw = dict(options)
+        if "extra_argv" in raw and not isinstance(raw["extra_argv"], tuple):
+            raw["extra_argv"] = tuple(raw["extra_argv"])
+        return InterpfilterCliOptions(**raw)
+    raise TypeError(f"expected InterpfilterCliOptions or mapping, got {type(options).__name__}")
+
+
+def _as_clausefilter_options(
+    options: ClausefilterCliOptions | Mapping[str, Any] | None,
+) -> ClausefilterCliOptions:
+    if options is None:
+        return ClausefilterCliOptions()
+    if isinstance(options, ClausefilterCliOptions):
+        return options
+    if isinstance(options, Mapping):
+        raw = dict(options)
+        if "extra_argv" in raw and not isinstance(raw["extra_argv"], tuple):
+            raw["extra_argv"] = tuple(raw["extra_argv"])
+        return ClausefilterCliOptions(**raw)
+    raise TypeError(f"expected ClausefilterCliOptions or mapping, got {type(options).__name__}")
+
+
+def _as_clausetester_options(
+    options: ClausetesterCliOptions | Mapping[str, Any] | None,
+) -> ClausetesterCliOptions:
+    if options is None:
+        return ClausetesterCliOptions()
+    if isinstance(options, ClausetesterCliOptions):
+        return options
+    if isinstance(options, Mapping):
+        raw = dict(options)
+        if "extra_argv" in raw and not isinstance(raw["extra_argv"], tuple):
+            raw["extra_argv"] = tuple(raw["extra_argv"])
+        return ClausetesterCliOptions(**raw)
+    raise TypeError(f"expected ClausetesterCliOptions or mapping, got {type(options).__name__}")
+
+
+def _as_rewriter_options(
+    options: RewriterCliOptions | Mapping[str, Any] | None,
+) -> RewriterCliOptions:
+    if options is None:
+        return RewriterCliOptions()
+    if isinstance(options, RewriterCliOptions):
+        return options
+    if isinstance(options, Mapping):
+        raw = dict(options)
+        if "extra_argv" in raw and not isinstance(raw["extra_argv"], tuple):
+            raw["extra_argv"] = tuple(raw["extra_argv"])
+        return RewriterCliOptions(**raw)
+    raise TypeError(f"expected RewriterCliOptions or mapping, got {type(options).__name__}")
+
+
+def _as_tptp_to_ladr_options(
+    options: TptpToLadrCliOptions | Mapping[str, Any] | None,
+) -> TptpToLadrCliOptions:
+    if options is None:
+        return TptpToLadrCliOptions()
+    if isinstance(options, TptpToLadrCliOptions):
+        return options
+    if isinstance(options, Mapping):
+        raw = dict(options)
+        if "extra_argv" in raw and not isinstance(raw["extra_argv"], tuple):
+            raw["extra_argv"] = tuple(raw["extra_argv"])
+        return TptpToLadrCliOptions(**raw)
+    raise TypeError(f"expected TptpToLadrCliOptions or mapping, got {type(options).__name__}")
+
+
+def _as_ladr_to_tptp_options(
+    options: LadrToTptpCliOptions | Mapping[str, Any] | None,
+) -> LadrToTptpCliOptions:
+    if options is None:
+        return LadrToTptpCliOptions()
+    if isinstance(options, LadrToTptpCliOptions):
+        return options
+    if isinstance(options, Mapping):
+        raw = dict(options)
+        if "extra_argv" in raw and not isinstance(raw["extra_argv"], tuple):
+            raw["extra_argv"] = tuple(raw["extra_argv"])
+        return LadrToTptpCliOptions(**raw)
+    raise TypeError(f"expected LadrToTptpCliOptions or mapping, got {type(options).__name__}")
+
+
+def _as_renamer_options(
+    options: RenamerCliOptions | Mapping[str, Any] | None,
+) -> RenamerCliOptions:
+    if options is None:
+        return RenamerCliOptions()
+    if isinstance(options, RenamerCliOptions):
+        return options
+    if isinstance(options, Mapping):
+        raw = dict(options)
+        if "extra_argv" in raw and not isinstance(raw["extra_argv"], tuple):
+            raw["extra_argv"] = tuple(raw["extra_argv"])
+        return RenamerCliOptions(**raw)
+    raise TypeError(f"expected RenamerCliOptions or mapping, got {type(options).__name__}")
+
+
+def _as_test_clause_eval_options(
+    options: TestClauseEvalCliOptions | Mapping[str, Any] | None,
+) -> TestClauseEvalCliOptions:
+    if options is None:
+        return TestClauseEvalCliOptions()
+    if isinstance(options, TestClauseEvalCliOptions):
+        return options
+    if isinstance(options, Mapping):
+        raw = dict(options)
+        if "extra_argv" in raw and not isinstance(raw["extra_argv"], tuple):
+            raw["extra_argv"] = tuple(raw["extra_argv"])
+        return TestClauseEvalCliOptions(**raw)
+    raise TypeError(f"expected TestClauseEvalCliOptions or mapping, got {type(options).__name__}")
+
+
 def _tool_run_from_prover9(
     pr: Prover9ProofResult,
     *,
@@ -141,7 +295,7 @@ class ToolRunEnvelope:
     """Tagged outcome of :func:`arun`: ``program``, optional subprocess :attr:`raw`, and typed payloads.
 
     Exactly one of ``prover9``, ``mace4_models``, or ``pipeline`` is typically set (besides
-    ``raw``). For ``clausetester``, only :attr:`raw` is populated.
+    ``raw``). Pipeline-style tools populate :attr:`pipeline` (including ``clausetester``).
     """
 
     program: ToolName
@@ -167,15 +321,40 @@ class ToolRunEnvelope:
 class ToolRegistry:
     """Maps tool names to facade instances (plus resolver); use :meth:`get` or :func:`arun`."""
 
-    __slots__ = ("_interpformat", "_isofilter", "_mace4", "_prooftrans", "_prover9", "_resolver")
+    __slots__ = (
+        "_clausefilter",
+        "_clausetester",
+        "_interpfilter",
+        "_interpformat",
+        "_isofilter",
+        "_isofilter2",
+        "_ladr_to_tptp",
+        "_mace4",
+        "_prooftrans",
+        "_prover9",
+        "_renamer",
+        "_resolver",
+        "_rewriter",
+        "_test_clause_eval",
+        "_tptp_to_ladr",
+    )
 
     def __init__(self, *, resolver: BinaryResolver | None = None) -> None:
         self._resolver = resolver or BinaryResolver()
         self._prover9 = Prover9(resolver=self._resolver)
         self._mace4 = Mace4(resolver=self._resolver)
         self._isofilter = Isofilter(resolver=self._resolver)
+        self._isofilter2 = Isofilter2(resolver=self._resolver)
         self._interpformat = Interpformat(resolver=self._resolver)
         self._prooftrans = Prooftrans(resolver=self._resolver)
+        self._interpfilter = InterpFilter(resolver=self._resolver)
+        self._clausefilter = ClauseFilter(resolver=self._resolver)
+        self._clausetester = ClauseTester(resolver=self._resolver)
+        self._rewriter = Rewriter(resolver=self._resolver)
+        self._tptp_to_ladr = TptpToLadr(resolver=self._resolver)
+        self._ladr_to_tptp = LadrToTptp(resolver=self._resolver)
+        self._renamer = Renamer(resolver=self._resolver)
+        self._test_clause_eval = TestClauseEval(resolver=self._resolver)
 
     @property
     def resolver(self) -> BinaryResolver:
@@ -194,6 +373,10 @@ class ToolRegistry:
         return self._isofilter
 
     @property
+    def isofilter2(self) -> Isofilter2:
+        return self._isofilter2
+
+    @property
     def interpformat(self) -> Interpformat:
         return self._interpformat
 
@@ -201,32 +384,81 @@ class ToolRegistry:
     def prooftrans(self) -> Prooftrans:
         return self._prooftrans
 
+    @property
+    def interpfilter(self) -> InterpFilter:
+        return self._interpfilter
+
+    @property
+    def clausefilter(self) -> ClauseFilter:
+        return self._clausefilter
+
+    @property
+    def clausetester(self) -> ClauseTester:
+        return self._clausetester
+
+    @property
+    def rewriter(self) -> Rewriter:
+        return self._rewriter
+
+    @property
+    def tptp_to_ladr(self) -> TptpToLadr:
+        return self._tptp_to_ladr
+
+    @property
+    def ladr_to_tptp(self) -> LadrToTptp:
+        return self._ladr_to_tptp
+
+    @property
+    def renamer(self) -> Renamer:
+        return self._renamer
+
+    @property
+    def test_clause_eval(self) -> TestClauseEval:
+        return self._test_clause_eval
+
     def get(
         self, program: ToolName | str
-    ) -> Prover9 | Mace4 | Isofilter | Interpformat | Prooftrans:
-        """Return the facade for a supported tool (not ``clausetester``, which has no facade)."""
+    ) -> (
+        Prover9
+        | Mace4
+        | Isofilter
+        | Isofilter2
+        | Interpformat
+        | Prooftrans
+        | InterpFilter
+        | ClauseFilter
+        | ClauseTester
+        | Rewriter
+        | TptpToLadr
+        | LadrToTptp
+        | Renamer
+        | TestClauseEval
+    ):
+        """Return the facade for a tool supported by :func:`arun`."""
         name = normalize_tool_name(str(program))
-        if name == "prover9":
-            return self._prover9
-        if name == "mace4":
-            return self._mace4
-        if name == "isofilter":
-            return self._isofilter
-        if name == "interpformat":
-            return self._interpformat
-        if name == "prooftrans":
-            return self._prooftrans
-        raise KeyError(
-            f"no facade object for {name!r} (clausetester has no high-level facade; use "
-            "arun(..., interp_file=...) or SubprocessInvocation)"
-        )
+        return {
+            "prover9": self._prover9,
+            "mace4": self._mace4,
+            "isofilter": self._isofilter,
+            "isofilter2": self._isofilter2,
+            "interpformat": self._interpformat,
+            "prooftrans": self._prooftrans,
+            "interpfilter": self._interpfilter,
+            "clausefilter": self._clausefilter,
+            "clausetester": self._clausetester,
+            "rewriter": self._rewriter,
+            "tptp_to_ladr": self._tptp_to_ladr,
+            "ladr_to_tptp": self._ladr_to_tptp,
+            "renamer": self._renamer,
+            "test_clause_eval": self._test_clause_eval,
+        }[name]
 
     def registered_tool_names(self) -> frozenset[ToolName]:
         """All tool names dispatchable via :func:`arun`."""
         return _ALL_REGISTERED
 
     def registered_pipeline_tools(self) -> frozenset[ToolName]:
-        """Subset with first-class pipeline facades (``isofilter``, ``interpformat``, ``prooftrans``)."""
+        """Tools whose :func:`arun` path populates :attr:`ToolRunEnvelope.pipeline`."""
         return _PIPELINE_TOOL_NAMES
 
 
@@ -234,25 +466,20 @@ async def arun(
     program: ToolName | str,
     input: str | bytes | Path | None = None,
     *,
-    options: Prover9CliOptions
-    | Mace4CliOptions
-    | IsofilterCliOptions
-    | InterpformatCliOptions
-    | ProofTransCliOptions
-    | Mapping[str, Any]
-    | None = None,
+    options: Any = None,
     resolver: BinaryResolver | None = None,
     registry: ToolRegistry | None = None,
     **kwargs: Any,
 ) -> ToolRunEnvelope:
     """Run a named LADR tool to completion and return a :class:`ToolRunEnvelope`.
 
-    Dispatches to :class:`~pyp9m4.prover9_facade.Prover9`, :class:`~pyp9m4.mace4_facade.Mace4`,
-    or pipeline facades. For ``mace4``, this collects all models (same semantics as exhausting
+    Dispatches to facades. For ``mace4``, this collects all models (same semantics as exhausting
     :meth:`~pyp9m4.mace4_facade.Mace4.amodels`); streaming stays on ``amodels`` / handles.
 
-    For ``clausetester``, pass ``interp_file=`` (path to an interpretations file); ``input`` is
-    sent on stdin (clause stream).
+    For ``clausetester``, pass ``interp_file=``; ``input`` is the clause stream on stdin.
+
+    For ``interpfilter`` / ``clausefilter``, pass ``formulas_file=`` + ``test=`` or
+    ``interpretations_file=`` + ``test=`` respectively.
     """
     reg = registry or ToolRegistry(resolver=resolver)
     name = normalize_tool_name(str(program))
@@ -301,6 +528,12 @@ async def arun(
         raw = _pipeline_to_tool_run(pipe)
         return ToolRunEnvelope(program="isofilter", raw=raw, pipeline=pipe)
 
+    if name == "isofilter2":
+        opts = _as_isofilter_options(options)
+        pipe = await reg.isofilter2.arun(input, options=opts, **kwargs)
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="isofilter2", raw=raw, pipeline=pipe)
+
     if name == "interpformat":
         opts = _as_interpformat_options(options)
         pipe = await reg.interpformat.arun(input, options=opts, **kwargs)
@@ -313,6 +546,34 @@ async def arun(
         raw = _pipeline_to_tool_run(pipe)
         return ToolRunEnvelope(program="prooftrans", raw=raw, pipeline=pipe)
 
+    if name == "interpfilter":
+        formulas_file = kwargs.pop("formulas_file", None)
+        test = kwargs.pop("test", None)
+        if formulas_file is None or test is None:
+            raise ValueError("interpfilter requires keyword-only formulas_file= and test=")
+        opts = _as_interpfilter_options(options)
+        pipe = await reg.interpfilter.arun(
+            input, formulas_file=formulas_file, test=str(test), options=opts, **kwargs
+        )
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="interpfilter", raw=raw, pipeline=pipe)
+
+    if name == "clausefilter":
+        interpretations_file = kwargs.pop("interpretations_file", None)
+        test = kwargs.pop("test", None)
+        if interpretations_file is None or test is None:
+            raise ValueError("clausefilter requires keyword-only interpretations_file= and test=")
+        opts = _as_clausefilter_options(options)
+        pipe = await reg.clausefilter.arun(
+            input,
+            interpretations_file=interpretations_file,
+            test=str(test),
+            options=opts,
+            **kwargs,
+        )
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="clausefilter", raw=raw, pipeline=pipe)
+
     if name == "clausetester":
         interp_file = kwargs.pop("interp_file", None)
         if interp_file is None:
@@ -320,24 +581,55 @@ async def arun(
         timeout_s = kwargs.pop("timeout_s", None)
         cwd = kwargs.pop("cwd", None)
         env = kwargs.pop("env", None)
-        encoding = kwargs.pop("encoding", "utf-8")
-        errors = kwargs.pop("errors", "replace")
-        if kwargs:
-            bad = next(iter(kwargs))
-            raise TypeError(f"arun(clausetester): unexpected keyword argument {bad!r}")
-
-        exe = reg.resolver.resolve("clausetester")
-        inv = SubprocessInvocation(
-            argv=(str(exe), os.fspath(interp_file)),
+        encoding = kwargs.pop("encoding", None)
+        errors = kwargs.pop("errors", None)
+        opts = _as_clausetester_options(options)
+        pipe = await reg.clausetester.arun(
+            input,
+            interp_file=interp_file,
+            options=opts,
             cwd=cwd,
             env=env,
-            stdin=input,
-            timeout_s=timeout_s,
             encoding=encoding,
             errors=errors,
+            timeout_s=timeout_s,
+            **kwargs,
         )
-        res = await AsyncToolRunner().run(inv)
-        return ToolRunEnvelope(program="clausetester", raw=res)
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="clausetester", raw=raw, pipeline=pipe)
+
+    if name == "rewriter":
+        demod_file = kwargs.pop("demod_file", None)
+        if demod_file is None:
+            raise ValueError("rewriter requires keyword-only demod_file=")
+        opts = _as_rewriter_options(options)
+        pipe = await reg.rewriter.arun(input, demod_file=demod_file, options=opts, **kwargs)
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="rewriter", raw=raw, pipeline=pipe)
+
+    if name == "tptp_to_ladr":
+        opts = _as_tptp_to_ladr_options(options)
+        pipe = await reg.tptp_to_ladr.arun(input, options=opts, **kwargs)
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="tptp_to_ladr", raw=raw, pipeline=pipe)
+
+    if name == "ladr_to_tptp":
+        opts = _as_ladr_to_tptp_options(options)
+        pipe = await reg.ladr_to_tptp.arun(input, options=opts, **kwargs)
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="ladr_to_tptp", raw=raw, pipeline=pipe)
+
+    if name == "renamer":
+        opts = _as_renamer_options(options)
+        pipe = await reg.renamer.arun(input, options=opts, **kwargs)
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="renamer", raw=raw, pipeline=pipe)
+
+    if name == "test_clause_eval":
+        opts = _as_test_clause_eval_options(options)
+        pipe = await reg.test_clause_eval.arun(input, options=opts, **kwargs)
+        raw = _pipeline_to_tool_run(pipe)
+        return ToolRunEnvelope(program="test_clause_eval", raw=raw, pipeline=pipe)
 
     raise AssertionError(f"unhandled tool: {name!r}")
 

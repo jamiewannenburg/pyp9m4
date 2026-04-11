@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -75,12 +76,75 @@ def test_normalize_tool_name_unknown() -> None:
         normalize_tool_name("not-a-tool")
 
 
+def test_normalize_tool_name_fof_prover9_not_in_arun() -> None:
+    with pytest.raises(ValueError, match="not supported by arun"):
+        normalize_tool_name("fof_prover9")
+
+
+@pytest.mark.asyncio
+async def test_arun_interpfilter_builds_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[tuple[str, ...]] = []
+
+    async def fake_run(self: AsyncToolRunner, inv) -> ToolRunResult:
+        captured.append(inv.argv)
+        return ToolRunResult(
+            status=RunStatus.SUCCEEDED,
+            argv=inv.argv,
+            exit_code=0,
+            duration_s=0.01,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
+    await arun(
+        "interpfilter",
+        "interpretation(1, [], []).\n",
+        formulas_file=Path("formulas.txt"),
+        test="all_true",
+        options={"extra_argv": ("-v",)},
+    )
+    assert len(captured) == 1
+    argv = captured[0]
+    assert argv[-2:] == (os.fspath(Path("formulas.txt")), "all_true")
+    assert "-v" in argv
+
+
+@pytest.mark.asyncio
+async def test_arun_clausefilter_builds_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[tuple[str, ...]] = []
+
+    async def fake_run(self: AsyncToolRunner, inv) -> ToolRunResult:
+        captured.append(inv.argv)
+        return ToolRunResult(
+            status=RunStatus.SUCCEEDED,
+            argv=inv.argv,
+            exit_code=0,
+            duration_s=0.01,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
+    await arun(
+        "clausefilter",
+        "P(x).\n",
+        interpretations_file="models.interps",
+        test="all_true",
+    )
+    assert captured[0][-2:] == (os.fspath(Path("models.interps")), "all_true")
+
+
 def test_tool_registry_get() -> None:
     reg = ToolRegistry()
     assert reg.get("isofilter") is reg.isofilter
     assert reg.get("interpformat") is reg.interpformat
     assert reg.get("prooftrans") is reg.prooftrans
+    assert reg.get("clausetester") is reg.clausetester
+    assert reg.get("interpfilter") is reg.interpfilter
+    assert reg.get("clausefilter") is reg.clausefilter
     assert "isofilter" in reg.registered_pipeline_tools()
+    assert "interpfilter" in reg.registered_pipeline_tools()
 
 
 def test_tool_registry_get_prover9_and_mace4() -> None:
