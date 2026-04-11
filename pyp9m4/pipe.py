@@ -12,6 +12,9 @@ from queue import Queue
 from typing import Final
 
 from pyp9m4.io_kinds import IOKind
+from pyp9m4.parsers import Interpretation
+from pyp9m4.parsers.mace4 import Mace4InterpretationBuffer
+from pyp9m4.parsers.prover9 import ProofSegment, parse_prover9_output
 from pyp9m4.runner import (
     AsyncToolRunner,
     RunStatus,
@@ -146,6 +149,20 @@ class Stage:
     def _require_steps(self) -> None:
         if not self.invocations:
             raise ValueError("Stage has no steps; add at least one with .with_step()")
+
+    def _require_interpretations_stage(self, method: str) -> None:
+        if self.out_kind != IOKind.INTERPRETATIONS:
+            raise TypeError(
+                f"{method}() requires a pipe whose final output is interpretations "
+                f"(Mace4 / isofilter / … stream); got {self.out_kind.value!r}"
+            )
+
+    def _require_proofs_stage(self, method: str) -> None:
+        if self.out_kind != IOKind.PROOFS:
+            raise TypeError(
+                f"{method}() requires a pipe whose final output is proofs "
+                f"(Prover9 / prooftrans log); got {self.out_kind.value!r}"
+            )
 
     def _effective_timeout(self) -> float | None:
         if self.timeout_s is not None:
@@ -287,6 +304,136 @@ class Stage:
             thread.join(timeout=600.0)
         if exc_holder:
             raise exc_holder[0]
+
+    async def ainterps(self) -> AsyncIterator[Interpretation]:
+        """Async iterator over completed ``interpretation(...)`` values from the final stdout stream.
+
+        Feeds each decoded stdout line (plus newline) into :class:`~pyp9m4.parsers.mace4.Mace4InterpretationBuffer`
+        while the pipe runs—same incremental rules as the buffer (portable ``[...]`` models need full-document
+        parsing instead).
+        """
+        self._require_steps()
+        self._require_interpretations_stage("ainterps")
+        buf = Mace4InterpretationBuffer()
+        queue: asyncio.Queue[Interpretation | None] = asyncio.Queue()
+        exc_holder: list[BaseException] = []
+
+        async def on_line(line: str) -> None:
+            for mi, _w in buf.feed(line + "\n"):
+                await queue.put(mi)
+
+        async def producer() -> None:
+            try:
+                runner = AsyncToolRunner()
+                await runner.run_pipe_chain(
+                    list(self.invocations),
+                    initial_stdin=self.initial_stdin,
+                    timeout_s=self._effective_timeout(),
+                    accumulate_last_stdout=False,
+                    on_last_stdout_line=on_line,
+                )
+            except BaseException as e:
+                exc_holder.append(e)
+            finally:
+                with contextlib.suppress(Exception):
+                    await queue.put(None)
+
+        task = asyncio.create_task(producer())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            with contextlib.suppress(Exception):
+                await task
+            if exc_holder:
+                raise exc_holder[0]
+
+    def interps(self) -> Iterator[Interpretation]:
+        """Blocking counterpart of :meth:`ainterps`."""
+        self._require_steps()
+        self._require_interpretations_stage("interps")
+        sync_q: Queue[Interpretation | None] = Queue()
+        exc_holder: list[BaseException] = []
+        buf = Mace4InterpretationBuffer()
+
+        async def on_line(line: str) -> None:
+            for mi, _w in buf.feed(line + "\n"):
+                sync_q.put(mi)
+
+        async def work() -> None:
+            try:
+                runner = AsyncToolRunner()
+                await runner.run_pipe_chain(
+                    list(self.invocations),
+                    initial_stdin=self.initial_stdin,
+                    timeout_s=self._effective_timeout(),
+                    accumulate_last_stdout=False,
+                    on_last_stdout_line=on_line,
+                )
+            except BaseException as e:
+                exc_holder.append(e)
+            finally:
+                sync_q.put(None)
+
+        def thread_main() -> None:
+            try:
+                _sync_run_awaitable(work)
+            except BaseException as e:
+                if not exc_holder:
+                    exc_holder.append(e)
+                sync_q.put(None)
+
+        thread = threading.Thread(target=thread_main, daemon=True)
+        thread.start()
+        try:
+            while True:
+                item = sync_q.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            thread.join(timeout=600.0)
+        if exc_holder:
+            raise exc_holder[0]
+
+    def interpretations(self) -> Iterator[Interpretation]:
+        """Alias of :meth:`interps`."""
+        yield from self.interps()
+
+    def models(self) -> Iterator[Interpretation]:
+        """Alias of :meth:`interps` (:class:`~pyp9m4.parsers.Interpretation` is also named ``Model``)."""
+        yield from self.interps()
+
+    async def _proof_segments_from_run(self, *, for_method: str) -> tuple[ProofSegment, ...]:
+        self._require_steps()
+        self._require_proofs_stage(for_method)
+        runner = AsyncToolRunner()
+        _st, _code, out, _err, _per = await runner.run_pipe_chain(
+            list(self.invocations),
+            initial_stdin=self.initial_stdin,
+            timeout_s=self._effective_timeout(),
+        )
+        return parse_prover9_output(out).proof_segments
+
+    async def aproofs(self) -> AsyncIterator[ProofSegment]:
+        """Yield coarse proof units from :func:`~pyp9m4.parsers.prover9.parse_prover9_output` after the run finishes.
+
+        This is a **stub**: stdout is accumulated internally, then ``proof_segments`` are emitted. The format may
+        evolve when a structured proof AST exists.
+        """
+        for seg in await self._proof_segments_from_run(for_method="aproofs"):
+            yield seg
+
+    def proofs(self) -> Iterator[ProofSegment]:
+        """Blocking counterpart of :meth:`aproofs`."""
+
+        async def collect() -> tuple[ProofSegment, ...]:
+            return await self._proof_segments_from_run(for_method="proofs")
+
+        return iter(_sync_run_awaitable(collect))
 
 
 Pipe = Stage

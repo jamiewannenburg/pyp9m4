@@ -8,7 +8,8 @@ HTTP-style option bodies: :func:`unwrap_gui_value`, :func:`coerce_mapping`, :fun
 (also :meth:`Prover9CliOptions.from_nested_dict` and siblings under :mod:`pyp9m4.options`).
 
 Multi-step stdin chains use :func:`pipeline` and :class:`PipelineBuilder`, or typed :class:`Stage` /
-:class:`Pipe` with :meth:`~Stage.output` / :meth:`~Stage.stream`. Lower-level pieces remain
+:class:`Pipe` with :meth:`~Stage.output`, :meth:`~Stage.stream`, :meth:`~Stage.interps` (or
+:meth:`~Stage.models`), and :meth:`~Stage.proofs`. Lower-level pieces remain
 available — see :mod:`pyp9m4.resolver` and :mod:`pyp9m4.runner`. Use :func:`dataclass_to_json_dict` /
 :func:`jsonify_for_api` or each type’s :meth:`~object.to_dict` for JSON APIs.
 """

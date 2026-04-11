@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: iterators
     content: Blocking interps()/interpretations()/models()/proofs() draining internal async stream + Mace4InterpretationBuffer; proofs() stub from proof_segments; optional ainterps()/aproofs() for event-loop apps
-    status: pending
+    status: completed
   - id: migrate-tests-docs
     content: Rewrite tests, examples, README; remove old public API surface from __init__.py
     status: pending
