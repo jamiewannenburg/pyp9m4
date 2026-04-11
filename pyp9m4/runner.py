@@ -322,6 +322,11 @@ class AsyncToolRunner:
                 src = procs[i].stdout
                 dst = procs[i + 1].stdin
                 assert src is not None and dst is not None
+                tee_path = _to_path(invs[i].tee_stdout_path)
+                tee_f = None
+                if tee_path is not None:
+                    tee_path.parent.mkdir(parents=True, exist_ok=True)
+                    tee_f = tee_path.open("ab")
                 try:
                     while True:
                         chunk = await src.read(65536)
@@ -329,7 +334,12 @@ class AsyncToolRunner:
                             break
                         dst.write(chunk)
                         await dst.drain()
+                        if tee_f is not None:
+                            tee_f.write(chunk)
+                            tee_f.flush()
                 finally:
+                    if tee_f is not None:
+                        tee_f.close()
                     dst.close()
                     with contextlib.suppress(Exception):
                         await dst.wait_closed()
@@ -349,11 +359,19 @@ class AsyncToolRunner:
                 p = procs[-1]
                 assert p.stdout is not None
                 acc: list[str] = []
+                last_p = _to_path(last_stdout_path)
+                tee_p = _to_path(invs[-1].tee_stdout_path)
                 f = None
-                if last_stdout_path is not None:
-                    pth = Path(last_stdout_path)
-                    pth.parent.mkdir(parents=True, exist_ok=True)
-                    f = pth.open("a", encoding=encoding, errors=errors)
+                tee_f = None
+                if last_p is not None:
+                    last_p.parent.mkdir(parents=True, exist_ok=True)
+                    f = last_p.open("a", encoding=encoding, errors=errors)
+                if tee_p is not None:
+                    if last_p is not None and tee_p.resolve() == last_p.resolve():
+                        tee_f = f
+                    else:
+                        tee_p.parent.mkdir(parents=True, exist_ok=True)
+                        tee_f = tee_p.open("a", encoding=encoding, errors=errors)
                 try:
                     while True:
                         raw = await p.stdout.readline()
@@ -369,9 +387,14 @@ class AsyncToolRunner:
                         if f is not None:
                             f.write(line + "\n")
                             f.flush()
+                        if tee_f is not None and tee_f is not f:
+                            tee_f.write(line + "\n")
+                            tee_f.flush()
                 finally:
                     if f is not None:
                         f.close()
+                    if tee_f is not None and tee_f is not f:
+                        tee_f.close()
                 return "\n".join(acc) if accumulate_last_stdout else ""
 
             async def drain_last_stdout_chunks() -> str:
@@ -379,11 +402,19 @@ class AsyncToolRunner:
                 assert p.stdout is not None
                 decoder = codecs.getincrementaldecoder(encoding)(errors)
                 text_parts: list[str] = []
+                last_p = _to_path(last_stdout_path)
+                tee_p = _to_path(invs[-1].tee_stdout_path)
                 f = None
-                if last_stdout_path is not None:
-                    pth = Path(last_stdout_path)
-                    pth.parent.mkdir(parents=True, exist_ok=True)
-                    f = pth.open("ab")
+                tee_f = None
+                if last_p is not None:
+                    last_p.parent.mkdir(parents=True, exist_ok=True)
+                    f = last_p.open("ab")
+                if tee_p is not None:
+                    if last_p is not None and tee_p.resolve() == last_p.resolve():
+                        tee_f = f
+                    else:
+                        tee_p.parent.mkdir(parents=True, exist_ok=True)
+                        tee_f = tee_p.open("ab")
                 try:
                     while True:
                         chunk = await p.stdout.read(65536)
@@ -398,6 +429,9 @@ class AsyncToolRunner:
                         if f is not None:
                             f.write(chunk)
                             f.flush()
+                        if tee_f is not None and tee_f is not f:
+                            tee_f.write(chunk)
+                            tee_f.flush()
                     text_parts.append(decoder.decode(b"", final=True))
                     if on_last_stdout_chunk is not None:
                         r = on_last_stdout_chunk(b"")
@@ -406,6 +440,8 @@ class AsyncToolRunner:
                 finally:
                     if f is not None:
                         f.close()
+                    if tee_f is not None and tee_f is not f:
+                        tee_f.close()
                 return "".join(text_parts) if accumulate_last_stdout else ""
 
             all_tasks: list[asyncio.Task[Any]] = [

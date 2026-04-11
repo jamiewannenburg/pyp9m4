@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: pipe-core
     content: Implement Stage/Pipe with output(), stream(), output_file tee, runtime type checks; one internal async runner with blocking public wrappers (no sync/async in default names)
-    status: pending
+    status: completed
   - id: facades
     content: Unified base + per-binary classes (incl. interpfilter, clausefilter, rewriter, translators, renamer, test_clause_eval, isofilter2); CLI dataclasses or extra_argv fallback
     status: pending
