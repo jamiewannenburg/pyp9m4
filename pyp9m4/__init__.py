@@ -1,17 +1,20 @@
 """pyp9m4 — Prover9 / Mace4 (LADR) tooling for Python.
 
-Primary API: :class:`Prover9` and :class:`Mace4` (constructor defaults, per-call overrides,
-parsed results, streaming models, and optional background jobs with :func:`job_status_snapshot_to_json_dict`).
+**Fluent pipes:** :class:`Theory` with :meth:`~Theory.mace4` / :meth:`~Theory.prover9`, then
+:class:`Stage` / :class:`Pipe` methods (``isofilter``, ``interpfilter``, ``prooftrans``, …) and
+:meth:`~Stage.output`, :meth:`~Stage.stream`, :meth:`~Stage.interps`, :meth:`~Stage.proofs`.
 
-Unified tool dispatch: :func:`arun`, :class:`ToolRegistry`, :data:`ToolName`, :func:`normalize_tool_name`.
-HTTP-style option bodies: :func:`unwrap_gui_value`, :func:`coerce_mapping`, :func:`cli_options_from_nested_dict`
-(also :meth:`Prover9CliOptions.from_nested_dict` and siblings under :mod:`pyp9m4.options`).
+**Facades:** :class:`Prover9` and :class:`Mace4` (defaults, parsed results, streaming models, jobs).
 
-Multi-step stdin chains use :func:`pipeline` and :class:`PipelineBuilder`, or typed :class:`Stage` /
-:class:`Pipe` with :meth:`~Stage.output`, :meth:`~Stage.stream`, :meth:`~Stage.interps` (or
-:meth:`~Stage.models`), and :meth:`~Stage.proofs`. Lower-level pieces remain
-available — see :mod:`pyp9m4.resolver` and :mod:`pyp9m4.runner`. Use :func:`dataclass_to_json_dict` /
-:func:`jsonify_for_api` or each type’s :meth:`~object.to_dict` for JSON APIs.
+**Dispatch:** :func:`arun`, :class:`ToolRegistry`, :data:`ToolName`, :func:`normalize_tool_name`.
+
+**Options:** :func:`unwrap_gui_value`, :func:`coerce_mapping`, :func:`cli_options_from_nested_dict`
+and dataclasses under :mod:`pyp9m4.options`.
+
+**Legacy multi-step helper:** :func:`pipeline` / :class:`PipelineBuilder` (streaming pumps).
+
+Lower-level: :mod:`pyp9m4.resolver`, :mod:`pyp9m4.runner`. JSON: :func:`dataclass_to_json_dict` /
+:func:`jsonify_for_api`.
 """
 
 from pyp9m4.job_manager import JobManager, JobManagerError, JobMetadata, ManagedJobSnapshot

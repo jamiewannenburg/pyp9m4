@@ -19,7 +19,7 @@ todos:
     status: completed
   - id: migrate-tests-docs
     content: Rewrite tests, examples, README; remove old public API surface from __init__.py
-    status: pending
+    status: completed
 isProject: false
 ---
 

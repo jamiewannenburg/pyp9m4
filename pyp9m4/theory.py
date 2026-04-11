@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from pyp9m4.io_kinds import HasTheoryText
 
@@ -56,3 +57,40 @@ class Theory(HasTheoryText):
         if len(self._text) > 72:
             return f"Theory({self._text[:36]!r}…{len(self._text)} chars…)"
         return f"Theory({self._text!r})"
+
+    def to_stage(
+        self,
+        *,
+        cwd: Any = None,
+        env: Mapping[str, str] | None = None,
+        timeout_s: float | None = None,
+        resolver: Any = None,
+    ) -> Any:
+        """Start a :class:`~pyp9m4.pipe.Stage` with theory text as stdin of the first tool."""
+        from pyp9m4.io_kinds import IOKind
+        from pyp9m4.pipe import Stage
+
+        return Stage.source(
+            self.to_theory_text(),
+            kind=IOKind.THEORY,
+            cwd=cwd,
+            env=env,
+            timeout_s=timeout_s,
+            resolver=resolver,
+        )
+
+    def mace4(self, *, cwd=None, env=None, timeout_s=None, resolver=None, **kwargs: Any) -> Any:
+        """``Theory → mace4 → …``; see :meth:`~pyp9m4.pipe.Stage.mace4`."""
+        return self.to_stage(cwd=cwd, env=env, timeout_s=timeout_s, resolver=resolver).mace4(**kwargs)
+
+    def prover9(self, *, cwd=None, env=None, timeout_s=None, resolver=None, **kwargs: Any) -> Any:
+        """``Theory → prover9 → …``; see :meth:`~pyp9m4.pipe.Stage.prover9`."""
+        return self.to_stage(cwd=cwd, env=env, timeout_s=timeout_s, resolver=resolver).prover9(**kwargs)
+
+    def fof_prover9(self, *, cwd=None, env=None, timeout_s=None, resolver=None, **kwargs: Any) -> Any:
+        """``Theory → fof-prover9 → …``; see :meth:`~pyp9m4.pipe.Stage.fof_prover9`."""
+        return self.to_stage(cwd=cwd, env=env, timeout_s=timeout_s, resolver=resolver).fof_prover9(**kwargs)
+
+    def ladr_to_tptp(self, *, cwd=None, env=None, timeout_s=None, resolver=None, **kwargs: Any) -> Any:
+        """``Theory → ladr_to_tptp → …``; see :meth:`~pyp9m4.pipe.Stage.ladr_to_tptp`."""
+        return self.to_stage(cwd=cwd, env=env, timeout_s=timeout_s, resolver=resolver).ladr_to_tptp(**kwargs)

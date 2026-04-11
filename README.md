@@ -47,6 +47,26 @@ Facades use `BinaryResolver` by default. It downloads a **pinned** release from 
 
 The pinned tag is exposed as `pyp9m4.BINARIES_VERSION`.
 
+## Fluent theory → tool chains
+
+Build a **typed linear pipe** from :class:`~pyp9m4.theory.Theory` (or :meth:`~pyp9m4.pipe.Stage.source`) with `.mace4()`, `.prover9()`, `.isofilter()`, `.interpfilter()`, and other methods on :class:`~pyp9m4.pipe.Stage` (alias ``Pipe``). Each step checks that the previous stage’s output **kind** matches what the tool expects (theory, interpretations, proofs, formulas, …). Run the chain with blocking **`.output()`** (returns :class:`~pyp9m4.pipe.PipeRunResult` with ``stdout`` / ``stderr``), **`.stream()`** (line or chunk iterator), **`.interps()`** / **`.models()`** when the final output is interpretations, or **`.proofs()`** for proof logs. Pass **`output_file=`** on a step to tee that subprocess’s stdout to a path while still feeding the next stage. Optional async variants use an **`a`** prefix (e.g. :meth:`~pyp9m4.pipe.Stage.aoutput`).
+
+```python
+from pyp9m4 import Theory
+
+# Example shape (adjust formulas / tests to your problem):
+run = (
+    Theory(assumptions=["P."], goals=["Q."])
+    .mace4(max_seconds=60)
+    .isofilter()
+    .interpfilter(formulas="R(x).", test="all_true")
+    .output()
+)
+print(run.ok, run.stdout[:200])
+```
+
+See also :func:`~pyp9m4.pipe.tool_stdio_kinds` and :mod:`pyp9m4.io_kinds` for stdin/stdout roles.
+
 ## Quick start (sync)
 
 Set **defaults once** on the facade; override per call with `options=` or keyword arguments that map to `Prover9CliOptions` / `Mace4CliOptions` fields (plus `timeout_s`, and for Mace4 `eliminate_isomorphic`).
@@ -90,7 +110,7 @@ Use `from pyp9m4 import ProverOutcome, infer_prover_outcome` if you parse stdout
 
 - Prover9: `prove` / `aprove` / `start_aprove` delegate to `run` / `arun` / `start_arun`.
 - Mace4: `counterexamples` / `acounterexamples` / `start_acounterexamples` delegate to `models` / `amodels` / `start_amodels`.
-- `Mace4Interpretation`: `get_value` and `model_eval` delegate to `value_at` (SMT-style naming).
+- :class:`~pyp9m4.Interpretation` (alias ``Model``): `get_value` and `model_eval` delegate to `value_at` (SMT-style naming).
 
 ## Async: `arun`, `amodels`, and background jobs
 

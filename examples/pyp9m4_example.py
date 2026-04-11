@@ -139,6 +139,21 @@ async def demo_background_poll() -> None:
 asyncio.run(demo_background_poll())
 
 # %% [markdown]
+# ## Theory → ``Stage`` fluent chain
+#
+# :class:`~pyp9m4.Theory` can start a typed pipe (``.mace4()``, ``.isofilter()``, …) and finish with
+# ``.output()`` / ``.interps()`` / ``.stream()``. Requires resolved LADR binaries for the tools you call.
+
+# %%
+from pyp9m4 import Theory
+
+_fluent = Theory(text=(_E2E / "mace4_sat.in").read_text(encoding="utf-8")).mace4(
+    domain_size=2,
+    timeout_s=120,
+)
+# _fluent.output()  # uncomment when binaries are available
+
+# %% [markdown]
 # ## Advanced: custom ``argv`` (e.g. prooftrans)
 #
 # For tools without a high-level facade, resolve binaries and use

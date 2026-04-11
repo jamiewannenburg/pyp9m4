@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from queue import Queue
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from pyp9m4.io_kinds import IOKind
 from pyp9m4.parsers import Interpretation
@@ -21,6 +21,9 @@ from pyp9m4.runner import (
     SubprocessInvocation,
     _sync_run_awaitable,
 )
+
+if TYPE_CHECKING:
+    from pyp9m4.resolver import BinaryResolver
 
 _TOOL_IO: Final[dict[str, tuple[IOKind, IOKind]]] = {
     "prover9": (IOKind.THEORY, IOKind.PROOFS),
@@ -90,6 +93,8 @@ class Stage:
     cwd: Path | str | None = None
     env: dict[str, str] | None = None
     timeout_s: float | None = None
+    resolver: BinaryResolver | None = None
+    cleanup_paths: tuple[Path, ...] = ()
 
     @classmethod
     def source(
@@ -100,6 +105,7 @@ class Stage:
         cwd: Path | str | None = None,
         env: Mapping[str, str] | None = None,
         timeout_s: float | None = None,
+        resolver: BinaryResolver | None = None,
     ) -> Stage:
         """First segment: data of semantic kind ``kind`` becomes stdin of the first subprocess."""
         return cls(
@@ -110,6 +116,8 @@ class Stage:
             cwd=cwd,
             env=dict(env) if env is not None else None,
             timeout_s=timeout_s,
+            resolver=resolver,
+            cleanup_paths=(),
         )
 
     def _merge_invocation(self, inv: SubprocessInvocation) -> SubprocessInvocation:
@@ -146,6 +154,11 @@ class Stage:
             invocations=new_invs,
         )
 
+    def _cleanup_temp_files(self) -> None:
+        for p in self.cleanup_paths:
+            with contextlib.suppress(Exception):
+                p.unlink(missing_ok=True)
+
     def _require_steps(self) -> None:
         if not self.invocations:
             raise ValueError("Stage has no steps; add at least one with .with_step()")
@@ -172,19 +185,22 @@ class Stage:
 
     async def aoutput(self) -> PipeRunResult:
         self._require_steps()
-        runner = AsyncToolRunner()
-        st, code, out, err, per = await runner.run_pipe_chain(
-            list(self.invocations),
-            initial_stdin=self.initial_stdin,
-            timeout_s=self._effective_timeout(),
-        )
-        return PipeRunResult(
-            stdout=out,
-            stderr=err,
-            status=st,
-            exit_code=code,
-            stderr_per_stage=per,
-        )
+        try:
+            runner = AsyncToolRunner()
+            st, code, out, err, per = await runner.run_pipe_chain(
+                list(self.invocations),
+                initial_stdin=self.initial_stdin,
+                timeout_s=self._effective_timeout(),
+            )
+            return PipeRunResult(
+                stdout=out,
+                stderr=err,
+                status=st,
+                exit_code=code,
+                stderr_per_stage=per,
+            )
+        finally:
+            self._cleanup_temp_files()
 
     def output(self) -> PipeRunResult:
         """Run the full chain to completion; return captured stdout and metadata."""
@@ -233,16 +249,19 @@ class Stage:
 
         task = asyncio.create_task(producer())
         try:
-            while True:
-                item = await queue.get()
-                if item is None:
-                    break
-                yield item
+            try:
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    yield item
+            finally:
+                with contextlib.suppress(Exception):
+                    await task
+                if exc_holder:
+                    raise exc_holder[0]
         finally:
-            with contextlib.suppress(Exception):
-                await task
-            if exc_holder:
-                raise exc_holder[0]
+            self._cleanup_temp_files()
 
     def stream(self, *, lines: bool = True) -> Iterator[str]:
         """Blocking iterator over final stdout as lines (default) or decoded chunks."""
@@ -302,6 +321,7 @@ class Stage:
                 yield item
         finally:
             thread.join(timeout=600.0)
+            self._cleanup_temp_files()
         if exc_holder:
             raise exc_holder[0]
 
@@ -350,6 +370,7 @@ class Stage:
                 await task
             if exc_holder:
                 raise exc_holder[0]
+            self._cleanup_temp_files()
 
     def interps(self) -> Iterator[Interpretation]:
         """Blocking counterpart of :meth:`ainterps`."""
@@ -396,6 +417,7 @@ class Stage:
                 yield item
         finally:
             thread.join(timeout=600.0)
+            self._cleanup_temp_files()
         if exc_holder:
             raise exc_holder[0]
 
@@ -424,16 +446,32 @@ class Stage:
         This is a **stub**: stdout is accumulated internally, then ``proof_segments`` are emitted. The format may
         evolve when a structured proof AST exists.
         """
-        for seg in await self._proof_segments_from_run(for_method="aproofs"):
-            yield seg
+        try:
+            segs = await self._proof_segments_from_run(for_method="aproofs")
+            for seg in segs:
+                yield seg
+        finally:
+            self._cleanup_temp_files()
 
     def proofs(self) -> Iterator[ProofSegment]:
         """Blocking counterpart of :meth:`aproofs`."""
 
         async def collect() -> tuple[ProofSegment, ...]:
-            return await self._proof_segments_from_run(for_method="proofs")
+            try:
+                return await self._proof_segments_from_run(for_method="proofs")
+            finally:
+                self._cleanup_temp_files()
 
         return iter(_sync_run_awaitable(collect))
 
 
 Pipe = Stage
+
+
+def _patch_stage_fluent() -> None:
+    from pyp9m4.stage_fluent import patch_stage
+
+    patch_stage(Stage)
+
+
+_patch_stage_fluent()
