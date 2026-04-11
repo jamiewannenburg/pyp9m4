@@ -19,7 +19,12 @@ from pyp9m4.parsers.pipeline import (
 from pyp9m4.parsers.prover9 import ProofSegment, Prover9Parsed, parse_prover9_output
 from pyp9m4.parsers.prover9_outcome import ProverOutcome, infer_prover_outcome
 
+Interpretation = Mace4Interpretation
+Model = Interpretation
+
 __all__ = [
+    "Interpretation",
+    "Model",
     "Mace4Interpretation",
     "Mace4InterpretationBuffer",
     "Mace4Parsed",

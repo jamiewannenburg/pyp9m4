@@ -23,9 +23,18 @@ from pyp9m4.jobs import (
     is_job_lifecycle_string,
     job_status_snapshot_to_json_dict,
 )
+from pyp9m4.io_kinds import (
+    HasInterpretationsFile,
+    HasLadrStdinText,
+    HasTheoryText,
+    IOKind,
+)
 from pyp9m4.serialization import dataclass_to_json_dict, jsonify_for_api
+from pyp9m4.theory import Theory
 from pyp9m4.mace4_facade import Mace4, Mace4SearchHandle
 from pyp9m4.parsers import (
+    Interpretation,
+    Model,
     ParseWarning,
     inspect_pipeline_text,
     parse_mace4_output,
@@ -72,6 +81,14 @@ from pyp9m4.runner import (
 )
 
 __all__ = [
+    # Fluent API taxonomy (I/O kinds, theory builder, interpretation names)
+    "IOKind",
+    "HasTheoryText",
+    "HasLadrStdinText",
+    "HasInterpretationsFile",
+    "Theory",
+    "Interpretation",
+    "Model",
     # Facades and primary result / handle types
     "Interpformat",
     "Isofilter",
