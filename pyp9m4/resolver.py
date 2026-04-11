@@ -15,7 +15,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Literal, overload
 
 from platformdirs import user_cache_dir
 
@@ -40,20 +40,62 @@ _PINNED_RELEASE_SHA256: Final[dict[str, str]] = {
     "ladr-windows.zip": "c969a21508cda706ce4b49e8ca16ccb208b9124143b804aeb605a1ea14bed8f8",
 }
 
-ToolName = Literal["prover9", "mace4", "interpformat", "isofilter", "prooftrans", "clausetester"]
+# Canonical resolver keys (underscores); filesystem stems match jamiewannenburg/ladr v0.0.8+ bin/.
+ToolName = Literal[
+    "prover9",
+    "fof_prover9",
+    "mace4",
+    "interpformat",
+    "isofilter",
+    "isofilter2",
+    "prooftrans",
+    "interpfilter",
+    "clausefilter",
+    "clausetester",
+    "tptp_to_ladr",
+    "ladr_to_tptp",
+    "rewriter",
+    "renamer",
+    "test_clause_eval",
+]
 
-_TOOL_STEMS: Final[dict[ToolName, str]] = {
+_TOOL_STEMS: Final[dict[str, str]] = {
     "prover9": "prover9",
+    "fof_prover9": "fof-prover9",
     "mace4": "mace4",
     "interpformat": "interpformat",
     "isofilter": "isofilter",
+    "isofilter2": "isofilter2",
     "prooftrans": "prooftrans",
+    "interpfilter": "interpfilter",
+    "clausefilter": "clausefilter",
     "clausetester": "clausetester",
+    "tptp_to_ladr": "tptp_to_ladr",
+    "ladr_to_tptp": "ladr_to_tptp",
+    "rewriter": "rewriter",
+    "renamer": "renamer",
+    "test_clause_eval": "test_clause_eval",
+}
+
+ALL_RESOLVABLE_TOOL_NAMES: Final[frozenset[str]] = frozenset(_TOOL_STEMS.keys())
+
+# User-facing aliases before hyphen→underscore normalization (shared with toolkit shortcuts).
+_RESOLVER_NAME_ALIASES: Final[dict[str, str]] = {
+    "if": "isofilter",
+    "iso": "isofilter",
+    "interp": "interpformat",
+    "ifc": "interpformat",
+    "modelformat": "interpformat",
+    "pt": "prooftrans",
 }
 
 
 class BinaryResolverError(Exception):
     """Base error for binary resolution."""
+
+
+class UnknownToolError(BinaryResolverError):
+    """Tool name is not a known LADR binary key (see :data:`ALL_RESOLVABLE_TOOL_NAMES`)."""
 
 
 class UnsupportedPlatformError(BinaryResolverError):
@@ -107,6 +149,23 @@ def asset_filename_for_platform_key(platform_key: str) -> str:
         f"No LADR release asset mapped for platform key {platform_key!r} "
         f"(supported prefixes: windows-, linux-, macos-)"
     )
+
+
+def normalize_resolver_tool_name(name: str) -> ToolName:
+    """Map a user or CLI string to a canonical :data:`ToolName` key.
+
+    Accepts hyphens (e.g. ``tptp-to-ladr``), underscores, case variants, and a few
+    short aliases (``if`` → ``isofilter``, etc.).
+    """
+    raw = name.strip().lower()
+    if not raw:
+        raise UnknownToolError("tool name must be non-empty")
+    key = _RESOLVER_NAME_ALIASES.get(raw, raw)
+    key = key.replace("-", "_")
+    if key not in _TOOL_STEMS:
+        known = ", ".join(sorted(ALL_RESOLVABLE_TOOL_NAMES))
+        raise UnknownToolError(f"unknown LADR tool {name!r} (known: {known})")
+    return key  # type: ignore[return-value]
 
 
 def _exe_stem(stem: str) -> str:
@@ -324,7 +383,7 @@ class BinaryResolver:
             raise BinaryResolverError(f"LADR_BIN_DIR is not a directory: {p}")
         return p
 
-    def _tool_home_dir(self, tool: ToolName) -> Path | None:
+    def _tool_home_dir(self, tool: str) -> Path | None:
         env_name = {"prover9": "PROVER9_HOME", "mace4": "MACE4_HOME"}.get(tool)
         if not env_name:
             return None
@@ -392,9 +451,20 @@ class BinaryResolver:
             return d
         return self.ensure_cached_extract()
 
-    def resolve(self, tool: ToolName) -> Path:
-        """Return an absolute path to the given tool, downloading into the cache if required."""
-        stem = _TOOL_STEMS[tool]
+    @overload
+    def resolve(self, tool: ToolName) -> Path: ...
+
+    @overload
+    def resolve(self, tool: str) -> Path: ...
+
+    def resolve(self, tool: ToolName | str) -> Path:
+        """Return an absolute path to the given tool, downloading into the cache if required.
+
+        ``tool`` may be a :data:`ToolName` literal or any string accepted by
+        :func:`normalize_resolver_tool_name` (hyphens, aliases, case-insensitive).
+        """
+        tool_key = normalize_resolver_tool_name(str(tool))
+        stem = _TOOL_STEMS[tool_key]
 
         if global_bin := self._ladr_bin_dir_from_env():
             hit = _first_existing(_candidate_executable_paths(global_bin, stem))
@@ -404,11 +474,11 @@ class BinaryResolver:
                 )
             return hit
 
-        if tool in ("prover9", "mace4"):
-            if home := self._tool_home_dir(tool):
+        if tool_key in ("prover9", "mace4"):
+            if home := self._tool_home_dir(tool_key):
                 hit = _first_existing(_candidate_executable_paths(home, stem))
                 if hit is None:
-                    env = "PROVER9_HOME" if tool == "prover9" else "MACE4_HOME"
+                    env = "PROVER9_HOME" if tool_key == "prover9" else "MACE4_HOME"
                     raise CachedBinariesError(
                         f"Executable {_exe_stem(stem)!r} not found under {env}={home}"
                     )

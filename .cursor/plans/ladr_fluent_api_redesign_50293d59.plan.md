@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: resolver
     content: Extend BinaryResolver / tool registry for all listed stems; verify names against pinned LADR bin layout
-    status: pending
+    status: completed
   - id: pipe-core
     content: Implement Stage/Pipe with output(), stream(), output_file tee, runtime type checks; one internal async runner with blocking public wrappers (no sync/async in default names)
     status: pending
