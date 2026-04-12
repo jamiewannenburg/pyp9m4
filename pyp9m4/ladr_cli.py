@@ -40,3 +40,84 @@ def prooftrans_main() -> None:
 
 def clausetester_main() -> None:
     _run_tool("clausetester")
+
+def autosketches4_main() -> None:
+    _run_tool("autosketches4")
+
+def clausefilter_main() -> None:
+    _run_tool("clausefilter")
+
+def complex_main() -> None:
+    _run_tool("complex")
+
+def directproof_main() -> None:
+    _run_tool("directproof")
+
+def dprofiles_main() -> None:
+    _run_tool("dprofiles")
+
+def fof_prover9_main() -> None:
+    _run_tool("fof-prover9")
+
+def gen_trc_defs_main() -> None:
+    _run_tool("gen_trc_defs")
+
+def idfilter_main() -> None:
+    _run_tool("idfilter")
+
+def isofilter0_main() -> None:
+    _run_tool("isofilter0")
+
+def isofilter2_main() -> None:
+    _run_tool("isofilter2")
+
+def ladr_to_tptp_main() -> None:
+    _run_tool("ladr_to_tptp")
+
+def latfilter_main() -> None:
+    _run_tool("latfilter")
+
+def looper_main() -> None:
+    _run_tool("looper")
+
+def miniscope_main() -> None:
+    _run_tool("miniscope")
+
+def mirror_flip_main() -> None:
+    _run_tool("mirror-flip")
+
+def newauto_main() -> None:
+    _run_tool("newauto")
+
+def newsax_main() -> None:
+    _run_tool("newsax")
+
+def olfilter_main() -> None:
+    _run_tool("olfilter")
+
+def perm3_main() -> None:
+    _run_tool("perm3")
+
+def renamer_main() -> None:
+    _run_tool("renamer")
+
+def rewriter_main() -> None:
+    _run_tool("rewriter")
+
+def sigtest_main() -> None:
+    _run_tool("sigtest")
+
+def test_clause_eval_main() -> None:
+    _run_tool("test_clause_eval")
+
+def test_complex_main() -> None:
+    _run_tool("test_complex")
+
+def tptp_to_ladr_main() -> None:
+    _run_tool("tptp_to_ladr")
+
+def unfast_main() -> None:
+    _run_tool("unfast")
+    
+def upper_covers_main() -> None:
+    _run_tool("upper-covers")

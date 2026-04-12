@@ -200,4 +200,4 @@ __all__ = [
     "stream_events_sync",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
