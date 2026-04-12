@@ -5,9 +5,12 @@ from __future__ import annotations
 import enum
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from pyp9m4.serialization import dataclass_to_json_dict
+
+if TYPE_CHECKING:
+    from pyp9m4.parsers.mace4 import Mace4StdoutMetadata
 
 JobLifecycle = Literal["pending", "running", "succeeded", "failed", "timed_out", "cancelled"]
 
@@ -76,6 +79,9 @@ class Mace4JobStatusSnapshot:
 
     duration_s: float | None = None
     """Wall time for the search (pipeline included when isomorphic filtering is on), when finished."""
+
+    mace4_metadata: "Mace4StdoutMetadata | None" = None
+    """Parsed transcript (preamble, statistics, per-domain counts) when stdout was available at exit."""
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-friendly snapshot (lists instead of tuples)."""

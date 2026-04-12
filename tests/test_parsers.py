@@ -12,7 +12,9 @@ from pyp9m4.parsers.mace4 import (
     Mace4InterpretationBuffer,
     extract_interpretation_blocks,
     format_mace4_interpretation,
+    mace4_interpretations_only_stdout,
     parse_mace4_output,
+    parse_mace4_stdout_metadata,
 )
 from pyp9m4.parsers.pipeline import inspect_pipeline_text, parse_pipeline_tool_output
 from pyp9m4.runner import RunStatus, SubprocessInvocation, ToolRunResult
@@ -36,6 +38,52 @@ Megabytes=0.03. User_CPU=0.01, System_CPU=0.00, Wall_clock=0.
 THEOREM PROVED
 Exiting with 1 proof.
 """
+
+MACE4_DOMAIN_STATS_TAIL = """
+============================== INPUT =================================
+x.
+============================== end of input ==========================
+
+============================== DOMAIN SIZE 3 =========================
+
+============================== MODEL =================================
+
+interpretation( 3, [number=1, seconds=0], [
+
+        function(e, [ 0 ]),
+
+]).
+
+============================== end of model ==========================
+
+============================== STATISTICS ============================
+
+For domain size 3.
+
+User_CPU=0.02, System_CPU=0.00, Wall_clock=0.
+
+Exiting with 1 models.
+
+============================== end of statistics =====================
+"""
+
+
+def test_parse_mace4_stdout_metadata_preamble_domains_stats() -> None:
+    meta = parse_mace4_stdout_metadata(
+        MACE4_DOMAIN_STATS_TAIL,
+        stderr="=== Mace4 starting on domain size 3. ===\n",
+    )
+    assert "INPUT" in meta.preamble
+    assert "DOMAIN SIZE 3" not in meta.preamble
+    assert meta.current_domain_size == 3
+    assert meta.models_by_domain == ((3, 1),)
+    assert meta.exiting_models == 1
+    assert meta.stderr_domain_sizes == (3,)
+    assert meta.statistics_kv.get("User_CPU") == "0.02"
+
+    trimmed = mace4_interpretations_only_stdout(MACE4_DOMAIN_STATS_TAIL)
+    assert "INPUT" not in trimmed
+    assert trimmed.strip().startswith("interpretation(")
 
 
 def test_parse_prover9_sections_and_stats() -> None:
@@ -179,8 +227,8 @@ interpretation( 2, [number=1, seconds=0], [
 def test_mace4_interpretation_list_style_binary_relation() -> None:
     sample = """
 interpretation( 3, [number=1], [
-        function(f, [ 0, 1, 2 ]),
-        relation(R(_,_), [1,0,0, 0,1,0, 0,0,1])
+   function(f, [ 0, 1, 2 ]),
+   relation(R(_,_), [1,0,0, 0,1,0, 0,0,1])
 ]).
 """
     mi = parse_mace4_output(sample).interpretations[0]
@@ -193,6 +241,24 @@ interpretation( 3, [number=1], [
     assert mi.holds("R", 1, 1) is True
     assert mi.holds("R", 2, 2) is True
     assert mi.holds("R", 0, 1) is False
+
+
+def test_mace4_interpretation_list_style_infix_placeholder_symbols() -> None:
+    """Operators print as ``*(_,_)`` / ``<(_,_ )`` in list-style; symbol name is the operator only."""
+    sample = """
+interpretation( 2, [number=1], [
+        function(*(_,_), [ 0, 1, 1, 0 ]),
+        relation(<(_,_), [ 1, 0, 0, 1 ])
+]).
+"""
+    mi = parse_mace4_output(sample).interpretations[0]
+    assert mi.domain_size == 2
+    assert mi.functions == {"*": 2}
+    assert mi.relations == {"<": 2}
+    assert mi.value_at("*", 0, 0) == 0
+    assert mi.value_at("*", 0, 1) == 1
+    assert mi.holds("<", 0, 0) is True
+    assert mi.holds("<", 0, 1) is False
 
 
 def test_mace4_interpretation_key_errors() -> None:

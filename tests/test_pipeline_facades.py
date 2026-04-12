@@ -205,6 +205,7 @@ async def test_arun_dispatches_mace4_with_raw_mocked(monkeypatch: pytest.MonkeyP
     assert env.raw.stdout.startswith("interpretation(")
     assert env.raw.stderr == "mace4 stderr"
     assert env.mace4_models is not None
+    assert env.mace4_metadata is not None
 
 
 def test_prooftrans_run_sync_mocked(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -152,6 +152,39 @@ async def test_mace4_search_handle_status_and_models_mocked_stream(
 
 
 @pytest.mark.asyncio
+async def test_mace4_amodels_updates_last_stream_domain_size_mocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = [
+        "============================== DOMAIN SIZE 4 =========================",
+        "interpretation( 4, [",
+        "   function = c1 = 0,",
+        "]).",
+    ]
+
+    async def _fake_stream(
+        self: AsyncToolRunner,
+        inv: object,
+        *,
+        parse_hook: object = None,
+        on_complete: object = None,
+    ):
+        assert on_complete is None
+        if parse_hook is not None:
+            for line in lines:
+                ev = StdoutLine(line)
+                async for x in parse_hook(ev):  # type: ignore[operator]
+                    yield x
+
+    monkeypatch.setattr(AsyncToolRunner, "stream_events", _fake_stream)
+
+    m = Mace4(resolver=BinaryResolver())
+    got = [x async for x in m.amodels("formulas(go).\nend_of_list.\n")]
+    assert len(got) == 1
+    assert m.last_stream_domain_size == 4
+
+
+@pytest.mark.asyncio
 async def test_prover9_proof_handle_event_stream_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_stream(
         self: AsyncToolRunner,
@@ -260,10 +293,11 @@ async def test_mace4_start_amodels_isomorphic_pipeline_mocked(
         *,
         timeout_s: float | None,  # noqa: ARG002
     ):
-        from pyp9m4.parsers.mace4 import parse_mace4_output
+        from pyp9m4.parsers.mace4 import parse_mace4_output, parse_mace4_stdout_metadata
 
         parsed = parse_mace4_output(interp_block)
-        return RunStatus.SUCCEEDED, 0, interp_block, "", parsed.interpretations
+        meta = parse_mace4_stdout_metadata(interp_block, stderr="")
+        return RunStatus.SUCCEEDED, 0, interp_block, "", parsed.interpretations, meta
 
     monkeypatch.setattr(Mace4, "_arun_isomorphic_pipeline", _fake_pipeline)
 

@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from pyp9m4.parsers.common import ParseWarning
-from pyp9m4.parsers.mace4 import Mace4Interpretation, Mace4InterpretationBuffer, parse_mace4_output
+from pyp9m4.parsers.mace4 import (
+    Mace4Interpretation,
+    Mace4InterpretationBuffer,
+    mace4_interpretations_only_stdout,
+    parse_mace4_output,
+    parse_mace4_stdout_metadata,
+)
 from pyp9m4.resolver import BinaryResolver, ToolName
 from pyp9m4.prover9_facade import Prover9
 from pyp9m4.runner import AsyncToolRunner, RunStatus, SubprocessInvocation, ToolRunResult
@@ -22,6 +28,7 @@ from pyp9m4.toolkit import (
     _as_mace4_options,
     _as_prooftrans_options,
     _as_prover9_options,
+    _finalize_mace4_tool_run,
     _tool_run_from_prover9,
     arun,
     normalize_tool_name,
@@ -72,6 +79,20 @@ def _stdout_for_next(env: ToolRunEnvelope) -> str:
     return ""
 
 
+_INTERP_STDIN_TOOL_STEMS = frozenset({"isofilter", "isofilter2", "interpformat", "interpfilter"})
+
+
+def _mace4_interpretation_only_bridge_indices(invs: list[SubprocessInvocation]) -> frozenset[int]:
+    """Indices ``i`` where ``invs[i]`` is Mace4 and ``invs[i+1]`` expects interpretation stdin."""
+    out: list[int] = []
+    for i in range(len(invs) - 1):
+        a = Path(invs[i].argv[0]).stem.lower()
+        b = Path(invs[i + 1].argv[0]).stem.lower()
+        if a == "mace4" and b in _INTERP_STDIN_TOOL_STEMS:
+            out.append(i)
+    return frozenset(out)
+
+
 async def _arun_mace4_for_chain(
     registry: ToolRegistry,
     stdin: str | bytes | None,
@@ -84,7 +105,7 @@ async def _arun_mace4_for_chain(
     eff, timeout_s, elim = m4._effective_options(options=opts, kwargs=dict(kwargs))
 
     if elim:
-        st, code, out, err, interps = await m4._arun_isomorphic_pipeline(
+        st, code, out, err, interps, m_meta = await m4._arun_isomorphic_pipeline(
             stdin,
             eff,
             timeout_s=timeout_s,
@@ -97,12 +118,16 @@ async def _arun_mace4_for_chain(
             stdout=out,
             stderr=err,
         )
-        return ToolRunEnvelope(program="mace4", raw=raw, mace4_models=interps)
+        return ToolRunEnvelope(
+            program="mace4", raw=raw, mace4_models=interps, mace4_metadata=m_meta
+        )
 
     inv = m4._build_inv(eff, stdin=stdin, timeout_s=timeout_s)
     res = await AsyncToolRunner().run(inv)
-    models = parse_mace4_output(res.stdout).interpretations
-    return ToolRunEnvelope(program="mace4", raw=res, mace4_models=tuple(models))
+    res2, meta, models = _finalize_mace4_tool_run(res)
+    return ToolRunEnvelope(
+        program="mace4", raw=res2, mace4_models=models, mace4_metadata=meta
+    )
 
 
 async def _run_one(
@@ -216,6 +241,13 @@ def _envelope_for_user_step(
     exit_code: int | None,
     mace4_models: tuple[Mace4Interpretation, ...] | None,
 ) -> ToolRunEnvelope:
+    m4_meta = None
+    m4_models = mace4_models
+    if program == "mace4" and stdout:
+        m4_meta = parse_mace4_stdout_metadata(stdout, stderr=stderr)
+        if m4_models is None:
+            m4_models = tuple(parse_mace4_output(stdout).interpretations)
+        stdout = mace4_interpretations_only_stdout(stdout)
     raw = ToolRunResult(
         status=status,
         argv=(),
@@ -225,7 +257,9 @@ def _envelope_for_user_step(
         stderr=stderr,
     )
     if program == "mace4":
-        return ToolRunEnvelope(program="mace4", raw=raw, mace4_models=mace4_models)
+        return ToolRunEnvelope(
+            program="mace4", raw=raw, mace4_models=m4_models, mace4_metadata=m4_meta
+        )
     if program == "prover9":
         p9: Prover9 = registry.prover9
         pr = p9._proof_result_from_run(raw)
@@ -402,6 +436,7 @@ class PipelineBuilder:
 
         eff_timeout = merged_defaults.get("timeout_s")
 
+        bridges = _mace4_interpretation_only_bridge_indices(flat_invs)
         st, code, last_out, last_err, per_inv_err = await AsyncToolRunner().run_pipe_chain(
             flat_invs,
             initial_stdin=_coerce_initial_input(self._initial),
@@ -410,6 +445,7 @@ class PipelineBuilder:
             on_last_stdout_line=on_last_stdout_line,
             last_stdout_path=last_stdout_path,
             on_last_stdout_chunk=chunk_cb,
+            mace4_interpretation_only_bridges=bridges,
         )
 
         out_steps: list[ChainStep] = []

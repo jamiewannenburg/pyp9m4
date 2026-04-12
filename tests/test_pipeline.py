@@ -76,6 +76,7 @@ async def test_pipeline_streaming_run_pipe_chain_mocked(monkeypatch: pytest.Monk
         on_last_stdout_line: object = None,
         last_stdout_path: object = None,
         on_last_stdout_chunk: object = None,
+        mace4_interpretation_only_bridges: object = None,
     ) -> tuple[object, ...]:
         assert len(invs) == 2
         return (
@@ -133,6 +134,7 @@ async def test_pipeline_mace4_then_isofilter_mocked(monkeypatch: pytest.MonkeyPa
     assert len(r.steps) == 2
     assert r.steps[0].envelope.program == "mace4"
     assert r.steps[0].envelope.mace4_models is not None
+    assert r.steps[0].envelope.mace4_metadata is not None
 
 
 @pytest.mark.asyncio

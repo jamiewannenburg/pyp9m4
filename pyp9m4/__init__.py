@@ -40,9 +40,12 @@ from pyp9m4.mace4_facade import Mace4, Mace4SearchHandle
 from pyp9m4.parsers import (
     Interpretation,
     Model,
+    Mace4StdoutMetadata,
     ParseWarning,
     inspect_pipeline_text,
+    mace4_interpretations_only_stdout,
     parse_mace4_output,
+    parse_mace4_stdout_metadata,
     parse_pipeline_tool_output,
     parse_prover9_output,
 )
@@ -169,7 +172,10 @@ __all__ = [
     # Parsers
     "ParseWarning",
     "parse_prover9_output",
+    "Mace4StdoutMetadata",
+    "mace4_interpretations_only_stdout",
     "parse_mace4_output",
+    "parse_mace4_stdout_metadata",
     "parse_pipeline_tool_output",
     "inspect_pipeline_text",
     # Binary resolution (also used implicitly by facades)

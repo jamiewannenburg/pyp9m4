@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,13 @@ from pyp9m4.options.renamer import RenamerCliOptions
 from pyp9m4.options.rewriter import RewriterCliOptions
 from pyp9m4.options.test_clause_eval import TestClauseEvalCliOptions
 from pyp9m4.options.tptp_to_ladr import TptpToLadrCliOptions
-from pyp9m4.parsers.mace4 import Mace4Interpretation, parse_mace4_output
+from pyp9m4.parsers.mace4 import (
+    Mace4Interpretation,
+    Mace4StdoutMetadata,
+    mace4_interpretations_only_stdout,
+    parse_mace4_output,
+    parse_mace4_stdout_metadata,
+)
 from pyp9m4.pipeline_facades import (
     ClauseFilter,
     ClauseTester,
@@ -296,6 +302,8 @@ class ToolRunEnvelope:
 
     Exactly one of ``prover9``, ``mace4_models``, or ``pipeline`` is typically set (besides
     ``raw``). Pipeline-style tools populate :attr:`pipeline` (including ``clausetester``).
+    For ``mace4``, :attr:`mace4_metadata` holds preamble/statistics; :attr:`raw.stdout` is trimmed
+    to ``interpretation(...)`` blocks for chaining.
     """
 
     program: ToolName
@@ -303,6 +311,7 @@ class ToolRunEnvelope:
     prover9: Prover9ProofResult | None = None
     mace4_models: tuple[Mace4Interpretation, ...] | None = None
     pipeline: PipelineToolResult | None = None
+    mace4_metadata: Mace4StdoutMetadata | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-friendly dict (omit unset typed payloads; include :attr:`raw` when present)."""
@@ -315,7 +324,20 @@ class ToolRunEnvelope:
             out["mace4_models"] = [dataclass_to_json_dict(m) for m in self.mace4_models]
         if self.pipeline is not None:
             out["pipeline"] = self.pipeline.to_dict()
+        if self.mace4_metadata is not None:
+            out["mace4_metadata"] = dataclass_to_json_dict(self.mace4_metadata)
         return out
+
+
+def _finalize_mace4_tool_run(
+    res: ToolRunResult,
+    *,
+    models: tuple[Mace4Interpretation, ...] | None = None,
+) -> tuple[ToolRunResult, Mace4StdoutMetadata, tuple[Mace4Interpretation, ...]]:
+    meta = parse_mace4_stdout_metadata(res.stdout, stderr=res.stderr)
+    interps = models if models is not None else tuple(parse_mace4_output(res.stdout).interpretations)
+    trimmed = replace(res, stdout=mace4_interpretations_only_stdout(res.stdout))
+    return trimmed, meta, interps
 
 
 class ToolRegistry:
@@ -502,7 +524,7 @@ async def arun(
             stdin = stdin.decode(m4._encoding, errors=m4._errors)
 
         if elim:
-            st, code, out, err, interps = await m4._arun_isomorphic_pipeline(
+            st, code, out, err, interps, m_meta = await m4._arun_isomorphic_pipeline(
                 stdin,
                 eff,
                 timeout_s=timeout_s,
@@ -515,12 +537,16 @@ async def arun(
                 stdout=out,
                 stderr=err,
             )
-            return ToolRunEnvelope(program="mace4", raw=raw, mace4_models=interps)
+            return ToolRunEnvelope(
+                program="mace4", raw=raw, mace4_models=interps, mace4_metadata=m_meta
+            )
 
         inv = m4._build_inv(eff, stdin=stdin, timeout_s=timeout_s)
         res = await AsyncToolRunner().run(inv)
-        models = parse_mace4_output(res.stdout).interpretations
-        return ToolRunEnvelope(program="mace4", raw=res, mace4_models=tuple(models))
+        res2, meta, models = _finalize_mace4_tool_run(res)
+        return ToolRunEnvelope(
+            program="mace4", raw=res2, mace4_models=models, mace4_metadata=meta
+        )
 
     if name == "isofilter":
         opts = _as_isofilter_options(options)

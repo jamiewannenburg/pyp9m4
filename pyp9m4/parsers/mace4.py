@@ -13,7 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pyp9m4.parsers.common import ParseWarning, split_ladr_section_blocks
+from pyp9m4.parsers.common import (
+    ParseWarning,
+    match_section_title_line,
+    parse_equals_key_values,
+    split_ladr_section_blocks,
+)
 from pyp9m4.resolver import BinaryResolver
 from pyp9m4.runner import SubprocessInvocation, ToolRunResult, run_sync
 
@@ -81,6 +86,9 @@ def extract_interpretation_blocks(text: str) -> tuple[str, ...]:
 
 
 _DOMAIN_RE = re.compile(r"interpretation\s*\(\s*(\d+)\s*,")
+_DOMAIN_SIZE_SECTION_TITLE_RE = re.compile(r"^DOMAIN\s+SIZE\s+(\d+)\s*$", re.I)
+_EXITING_MODELS_RE = re.compile(r"Exiting\s+with\s+(\d+)\s+models", re.I)
+_STDERR_DOMAIN_SIZE_RE = re.compile(r"domain\s+size\s+(\d+)", re.I)
 _ASSIGN_LINE_RE = re.compile(
     r"^\s*(function|relation)\s*=\s*(.+?)\s*,?\s*$",
     re.IGNORECASE,
@@ -246,6 +254,7 @@ def _split_top_level_commas(s: str) -> list[str]:
 
     Used for parsing list-style Mace4 terms like:
     - function(sym, [0,1,...])
+    - function(*(_,_), [0,1,...])
     - relation(P(_,_), [1,0,...])
     """
     parts: list[str] = []
@@ -266,6 +275,35 @@ def _split_top_level_commas(s: str) -> list[str]:
             start = i + 1
     parts.append(s[start:].strip())
     return [p for p in parts if p]
+
+
+def _list_style_name_and_placeholder_arity(sym_part: str) -> tuple[str, int | None]:
+    """Split ``name`` from ``name(_,..._)`` when arguments are only ``_`` placeholders.
+
+    Mace4 list-style output uses this shape for operators and ordinary symbols, e.g.
+    ``*(_,_)`` or ``f(_,_)``. Returns ``(name, arity)`` when that pattern matches;
+    otherwise ``(stripped_token, None)`` and the caller should treat the whole token as
+    the symbol name (or apply other parsing).
+    """
+    s = sym_part.strip()
+    p = s.find("(")
+    if p < 0:
+        return s, None
+    if p == 0 or not s.endswith(")"):
+        return s, None
+    name = s[:p].strip()
+    if not name:
+        return s, None
+    inner = s[p + 1 : -1].strip()
+    if not inner:
+        return name, 0
+    arg_toks = _split_args_depth0(inner)
+    if not arg_toks:
+        return name, 0
+    for tok in arg_toks:
+        if tok.strip() != "_":
+            return s, None
+    return name, len(arg_toks)
 
 
 _INT_RE = re.compile(r"-?\d+")
@@ -338,7 +376,9 @@ def _build_tables_from_list_style(
         if len(parts) != 2:
             warns.append(ParseWarning("function_term_parse_failed", f"could not split {term!r}"))
             continue
-        sym = parts[0].strip()
+        sym_raw = parts[0].strip()
+        sym_base, tpl_arity = _list_style_name_and_placeholder_arity(sym_raw)
+        sym = sym_base if tpl_arity is not None else sym_raw
         vals = _parse_int_list(parts[1])
         if vals is None:
             warns.append(ParseWarning("function_values_parse_failed", f"could not parse list in {term!r}"))
@@ -365,6 +405,15 @@ def _build_tables_from_list_style(
                     )
                 )
                 continue
+
+        if tpl_arity is not None and tpl_arity != arity:
+            warns.append(
+                ParseWarning(
+                    "function_template_arity_mismatch",
+                    f"placeholder arity {tpl_arity} vs inferred {arity} for {sym!r} in {term!r}",
+                )
+            )
+            continue
 
         if arity == 0:
             key = (sym, ())
@@ -409,26 +458,30 @@ def _build_tables_from_list_style(
             warns.append(ParseWarning("relation_values_parse_failed", f"could not parse list in {term!r}"))
             continue
 
-        # Parse template: `P(_)`, `P(_,_ )`, etc.
-        tpl_open = template.find("(")
-        if tpl_open < 0:
-            rel_name = template
-            rel_k = 0
+        # Parse template: `P(_)`, `*(_,_)`, or non-placeholder `f(0,1)`-style heads.
+        rel_tpl = _list_style_name_and_placeholder_arity(template)
+        if rel_tpl[1] is not None:
+            rel_name, rel_k = rel_tpl[0], rel_tpl[1]
         else:
-            rel_name = template[:tpl_open].strip()
-            tpl_inner = template[tpl_open + 1 : -1].strip()
-            if not tpl_inner:
+            tpl_open = template.find("(")
+            if tpl_open < 0:
+                rel_name = template
                 rel_k = 0
             else:
-                toks = [t.strip() for t in tpl_inner.split(",") if t.strip()]
-                rel_k = len(toks)
-                if any(t != "_" for t in toks):
-                    warns.append(
-                        ParseWarning(
-                            "relation_template_unexpected",
-                            f"expected '_' placeholders in {template!r} but got {toks!r}",
+                rel_name = template[:tpl_open].strip()
+                tpl_inner = template[tpl_open + 1 : -1].strip()
+                if not tpl_inner:
+                    rel_k = 0
+                else:
+                    toks = [t.strip() for t in tpl_inner.split(",") if t.strip()]
+                    rel_k = len(toks)
+                    if any(t != "_" for t in toks):
+                        warns.append(
+                            ParseWarning(
+                                "relation_template_unexpected",
+                                f"expected '_' placeholders in {template!r} but got {toks!r}",
+                            )
                         )
-                    )
 
         if domain_size is None:
             warns.append(
@@ -876,6 +929,117 @@ class Mace4Parsed:
     """Top-level list objects from portable format (via :func:`ast.literal_eval`), if any."""
 
     warnings: tuple[ParseWarning, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Mace4StdoutMetadata:
+    """Structured data from a Mace4 stdout/stderr transcript (search log + models + statistics).
+
+    :attr:`preamble` is the text before the first ``DOMAIN SIZE`` section banner. Per-domain model
+    counts follow the order of ``DOMAIN SIZE`` banners in the output. :attr:`statistics_kv` merges
+    keys from the ``STATISTICS`` section body and trailing summary lines (e.g. ``User_CPU=``).
+    """
+
+    preamble: str
+    models_by_domain: tuple[tuple[int, int], ...]
+    """``(domain_size, model_count)`` for each ``DOMAIN SIZE`` banner, in banner order."""
+
+    current_domain_size: int | None
+    """Domain size from the last ``DOMAIN SIZE`` banner, if any."""
+
+    statistics_section: str
+    """Raw body of the ``STATISTICS`` section (between LADR banner lines)."""
+
+    statistics_kv: dict[str, str]
+    exiting_models: int | None
+    """Value from ``Exiting with N models`` when present."""
+
+    stderr_domain_sizes: tuple[int, ...]
+    """Domain sizes parsed from stderr (e.g. ``Mace4 starting on domain size 3``)."""
+
+
+def domain_size_from_mace4_section_title(title: str) -> int | None:
+    """If ``title`` is a ``DOMAIN SIZE n`` Mace4 section heading (trimmed), return ``n``."""
+    m = _DOMAIN_SIZE_SECTION_TITLE_RE.match(title.strip())
+    return int(m.group(1)) if m else None
+
+
+def _first_domain_size_banner_line_index(lines: list[str]) -> int | None:
+    for i, line in enumerate(lines):
+        title = match_section_title_line(line)
+        if title is None:
+            continue
+        if domain_size_from_mace4_section_title(title) is not None:
+            return i
+    return None
+
+
+def _domain_sizes_banner_order(text: str) -> tuple[int, ...]:
+    order: list[int] = []
+    for line in text.splitlines():
+        title = match_section_title_line(line)
+        if title is None:
+            continue
+        d = domain_size_from_mace4_section_title(title)
+        if d is not None:
+            order.append(d)
+    return tuple(order)
+
+
+def mace4_interpretations_only_stdout(stdout: str) -> str:
+    """Return only ``interpretation(...)`` blocks from Mace4 stdout, joined with newlines.
+
+    If no balanced interpretation blocks are found (e.g. portable-only output), returns ``stdout``
+    unchanged so downstream tools still receive the original bytes-equivalent text.
+    """
+    blocks = extract_interpretation_blocks(stdout)
+    if not blocks:
+        return stdout
+    return "\n".join(blocks) + "\n"
+
+
+def parse_mace4_stdout_metadata(stdout: str, *, stderr: str = "") -> Mace4StdoutMetadata:
+    """Parse preamble, per-domain model counts, statistics, and stderr domain hints."""
+    lines = stdout.splitlines()
+    idx = _first_domain_size_banner_line_index(lines)
+    preamble = "\n".join(lines[:idx]) if idx is not None else stdout
+
+    domain_order = _domain_sizes_banner_order(stdout)
+    counts: dict[int, int] = {}
+    for b in extract_interpretation_blocks(stdout):
+        dm = _DOMAIN_RE.search(b)
+        if dm:
+            d = int(dm.group(1))
+            counts[d] = counts.get(d, 0) + 1
+
+    models_by_domain = tuple((d, counts.get(d, 0)) for d in domain_order)
+    current_domain_size = domain_order[-1] if domain_order else None
+
+    sections, _ = split_ladr_section_blocks(stdout)
+    stat_body = sections.get("STATISTICS", "")
+    stat_kv = dict(parse_equals_key_values(stat_body))
+    tail_blob = "\n".join(lines[-24:])
+    for k, v in parse_equals_key_values(tail_blob).items():
+        stat_kv.setdefault(k, v)
+
+    exit_m = _EXITING_MODELS_RE.search(stdout)
+    exiting_models = int(exit_m.group(1)) if exit_m else None
+
+    stderr_domains: list[int] = []
+    for line in stderr.splitlines():
+        sm = _STDERR_DOMAIN_SIZE_RE.search(line)
+        if sm:
+            stderr_domains.append(int(sm.group(1)))
+
+    return Mace4StdoutMetadata(
+        preamble=preamble,
+        models_by_domain=models_by_domain,
+        current_domain_size=current_domain_size,
+        statistics_section=stat_body,
+        statistics_kv=stat_kv,
+        exiting_models=exiting_models,
+        stderr_domain_sizes=tuple(stderr_domains),
+    )
 
 
 def _parse_standard_block(block: str) -> tuple[Mace4Interpretation, tuple[ParseWarning, ...]]:

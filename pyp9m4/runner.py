@@ -249,11 +249,16 @@ class AsyncToolRunner:
         on_last_stdout_line: Callable[[str], Awaitable[None] | None] | None = None,
         last_stdout_path: Path | str | None = None,
         on_last_stdout_chunk: Callable[[bytes], Awaitable[None] | None] | None = None,
+        mace4_interpretation_only_bridges: frozenset[int] | None = None,
     ) -> tuple[RunStatus, int | None, str, str, tuple[str, ...]]:
         """Run ``invs[0] | invs[1] | ...`` with byte-sized pumps (no full intermediate buffers).
 
         The last process stdout is consumed line-by-line unless ``on_last_stdout_chunk`` is set,
         in which case it is read in fixed-size chunks (for incremental decoding / parsing).
+
+        When ``mace4_interpretation_only_bridges`` contains an index ``i``, bytes from
+        ``procs[i].stdout`` are filtered to completed ``interpretation(...)`` blocks before
+        writing to ``procs[i+1].stdin`` (fallback: pass-through if no blocks were seen).
 
         Returns ``(status, exit_code, last_stdout, last_stderr, stderr_per_inv)``.
         ``last_stderr`` is the last process's stderr only; ``stderr_per_inv`` has one string per
@@ -337,6 +342,53 @@ class AsyncToolRunner:
                         if tee_f is not None:
                             tee_f.write(chunk)
                             tee_f.flush()
+                finally:
+                    if tee_f is not None:
+                        tee_f.close()
+                    dst.close()
+                    with contextlib.suppress(Exception):
+                        await dst.wait_closed()
+
+            async def pump_mace4_interpretations_only(i: int) -> None:
+                # Local import avoids import cycle (parsers.mace4 imports this module).
+                from pyp9m4.parsers.mace4 import Mace4InterpretationBuffer
+
+                src = procs[i].stdout
+                dst = procs[i + 1].stdin
+                assert src is not None and dst is not None
+                tee_path = _to_path(invs[i].tee_stdout_path)
+                tee_f = None
+                if tee_path is not None:
+                    tee_path.parent.mkdir(parents=True, exist_ok=True)
+                    tee_f = tee_path.open("ab")
+                dec = codecs.getincrementaldecoder(encoding)(errors)
+                buf = Mace4InterpretationBuffer()
+                raw_chunks: list[bytes] = []
+                sent_any = False
+                try:
+                    while True:
+                        chunk = await src.read(65536)
+                        if not chunk:
+                            break
+                        raw_chunks.append(chunk)
+                        if tee_f is not None:
+                            tee_f.write(chunk)
+                            tee_f.flush()
+                        text = dec.decode(chunk)
+                        for mi, _ in buf.feed(text):
+                            sent_any = True
+                            dst.write((mi.raw + "\n").encode(encoding, errors=errors))
+                            await dst.drain()
+                    tail = dec.decode(b"", final=True)
+                    if tail:
+                        for mi, _ in buf.feed(tail):
+                            sent_any = True
+                            dst.write((mi.raw + "\n").encode(encoding, errors=errors))
+                            await dst.drain()
+                    if not sent_any:
+                        for c in raw_chunks:
+                            dst.write(c)
+                            await dst.drain()
                 finally:
                     if tee_f is not None:
                         tee_f.close()
@@ -444,9 +496,17 @@ class AsyncToolRunner:
                         tee_f.close()
                 return "".join(text_parts) if accumulate_last_stdout else ""
 
+            bridges = mace4_interpretation_only_bridges or frozenset()
+            bridge_tasks: list[asyncio.Task[None]] = []
+            for i in range(n - 1):
+                if i in bridges:
+                    bridge_tasks.append(asyncio.create_task(pump_mace4_interpretations_only(i)))
+                else:
+                    bridge_tasks.append(asyncio.create_task(pump_to_next(i)))
+
             all_tasks: list[asyncio.Task[Any]] = [
                 asyncio.create_task(feed_first()),
-                *[asyncio.create_task(pump_to_next(i)) for i in range(n - 1)],
+                *bridge_tasks,
                 *[asyncio.create_task(drain_stderr_idx(i)) for i in range(n)],
                 asyncio.create_task(
                     drain_last_stdout_chunks()

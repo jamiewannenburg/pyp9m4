@@ -24,8 +24,16 @@ from pyp9m4.jobs import JobLifecycle, Mace4JobStatusSnapshot
 from pyp9m4.options.interpformat import InterpformatCliOptions
 from pyp9m4.options.isofilter import IsofilterCliOptions
 from pyp9m4.options.mace4 import Mace4CliOptions
-from pyp9m4.parsers.common import ParseWarning
-from pyp9m4.parsers.mace4 import Mace4Interpretation, Mace4InterpretationBuffer, parse_mace4_output
+from pyp9m4.parsers.common import ParseWarning, match_section_title_line
+from pyp9m4.parsers.mace4 import (
+    Mace4Interpretation,
+    Mace4InterpretationBuffer,
+    Mace4StdoutMetadata,
+    domain_size_from_mace4_section_title,
+    mace4_interpretations_only_stdout,
+    parse_mace4_output,
+    parse_mace4_stdout_metadata,
+)
 from pyp9m4.resolver import BinaryResolver
 from pyp9m4.runner import (
     AsyncToolRunner,
@@ -83,6 +91,7 @@ class _Mace4JobState:
     stderr_lines: list[str] = field(default_factory=list)
     argv: tuple[str, ...] = ()
     duration_s: float | None = None
+    mace4_metadata: Mace4StdoutMetadata | None = None
 
     def snapshot(
         self,
@@ -101,6 +110,7 @@ class _Mace4JobState:
             argv=self.argv,
             domain_increment=domain_increment,
             duration_s=self.duration_s,
+            mace4_metadata=self.mace4_metadata,
         )
 
 
@@ -207,6 +217,7 @@ class Mace4:
         "_iso_path",
         "_mace4_path",
         "_resolver",
+        "_last_stream_domain_size",
     )
 
     def __init__(
@@ -246,6 +257,18 @@ class Mace4:
         self._env = dict(env) if env is not None else None
         self._encoding = encoding
         self._errors = errors
+        self._last_stream_domain_size: int | None = None
+
+    @property
+    def last_stream_domain_size(self) -> int | None:
+        """Best-effort domain size from the current or last :meth:`models` / :meth:`amodels` run.
+
+        Updated from ``DOMAIN SIZE`` section lines on stdout before models arrive, then from each
+        yielded interpretation (same idea as :attr:`Mace4JobStatusSnapshot.last_domain_size` on
+        :class:`Mace4SearchHandle`). ``None`` when no search has run or no signal was seen.
+        """
+
+        return self._last_stream_domain_size
 
     @property
     def default_options(self) -> Mace4CliOptions:
@@ -311,25 +334,26 @@ class Mace4:
         opts: Mace4CliOptions,
         *,
         timeout_s: float | None,
-    ) -> tuple[RunStatus, int | None, str, str, tuple[Mace4Interpretation, ...]]:
+    ) -> tuple[RunStatus, int | None, str, str, tuple[Mace4Interpretation, ...], Mace4StdoutMetadata]:
         runner = AsyncToolRunner()
         inv_m = self._build_inv(opts, stdin=stdin, timeout_s=timeout_s)
         r1 = await runner.run(inv_m)
+        m_meta = parse_mace4_stdout_metadata(r1.stdout, stderr=r1.stderr)
         if r1.status != RunStatus.SUCCEEDED:
-            return r1.status, r1.exit_code, r1.stdout, r1.stderr, ()
+            return r1.status, r1.exit_code, r1.stdout, r1.stderr, (), m_meta
         ifc = self._exe_interpformat()
         inv_i = SubprocessInvocation(
             argv=(os.fspath(ifc), *self._ifc_default.to_argv()),
             cwd=self._cwd,
             env=self._env,
-            stdin=r1.stdout,
+            stdin=mace4_interpretations_only_stdout(r1.stdout),
             timeout_s=timeout_s,
             encoding=self._encoding,
             errors=self._errors,
         )
         r2 = await runner.run(inv_i)
         if r2.status != RunStatus.SUCCEEDED:
-            return r2.status, r2.exit_code, r2.stdout, r2.stderr, ()
+            return r2.status, r2.exit_code, r2.stdout, r2.stderr, (), m_meta
         iso = self._exe_isofilter()
         inv_s = SubprocessInvocation(
             argv=(os.fspath(iso), *self._iso_default.to_argv()),
@@ -342,7 +366,7 @@ class Mace4:
         )
         r3 = await runner.run(inv_s)
         parsed = parse_mace4_output(r3.stdout)
-        return r3.status, r3.exit_code, r3.stdout, r3.stderr, parsed.interpretations
+        return r3.status, r3.exit_code, r3.stdout, r3.stderr, parsed.interpretations, m_meta
 
     def _sync_isomorphic_pipeline(
         self,
@@ -350,8 +374,10 @@ class Mace4:
         opts: Mace4CliOptions,
         *,
         timeout_s: float | None,
-    ) -> tuple[RunStatus, int | None, str, str, tuple[Mace4Interpretation, ...]]:
-        async def _go() -> tuple[RunStatus, int | None, str, str, tuple[Mace4Interpretation, ...]]:
+    ) -> tuple[RunStatus, int | None, str, str, tuple[Mace4Interpretation, ...], Mace4StdoutMetadata]:
+        async def _go() -> tuple[
+            RunStatus, int | None, str, str, tuple[Mace4Interpretation, ...], Mace4StdoutMetadata
+        ]:
             return await self._arun_isomorphic_pipeline(stdin, opts, timeout_s=timeout_s)
 
         return _sync_run_awaitable(_go)
@@ -375,14 +401,18 @@ class Mace4:
             stdin_bytes = stdin_raw.encode(self._encoding, errors=self._errors)
 
         if elim:
-            st, _code, _out, _err, interps = self._sync_isomorphic_pipeline(
+            self._last_stream_domain_size = None
+            st, _code, _out, _err, interps, m_meta = self._sync_isomorphic_pipeline(
                 stdin_raw,
                 opts,
                 timeout_s=timeout_s,
             )
             if st != RunStatus.SUCCEEDED:
                 return
+            self._last_stream_domain_size = m_meta.current_domain_size
             for mi in interps:
+                if mi.domain_size is not None:
+                    self._last_stream_domain_size = mi.domain_size
                 if on_model:
                     on_model(mi, ())
                 yield mi
@@ -417,12 +447,20 @@ class Mace4:
             assert proc.stdout is not None
             deadline = time.monotonic() + timeout_s if timeout_s is not None else None
 
+            self._last_stream_domain_size = None
             for raw_line in proc.stdout:
                 if deadline is not None and time.monotonic() > deadline:
                     proc.terminate()
                     break
                 line = raw_line.decode(self._encoding, errors=self._errors).rstrip("\r\n")
+                title = match_section_title_line(line)
+                if title is not None:
+                    dsz = domain_size_from_mace4_section_title(title)
+                    if dsz is not None:
+                        self._last_stream_domain_size = dsz
                 for mi, warns in buf.feed(line + "\n"):
+                    if mi.domain_size is not None:
+                        self._last_stream_domain_size = mi.domain_size
                     if on_model:
                         on_model(mi, warns)
                     yield mi
@@ -449,14 +487,18 @@ class Mace4:
             stdin = stdin.decode(self._encoding, errors=self._errors)
 
         if elim:
-            st, _c, _o, _e, interps = await self._arun_isomorphic_pipeline(
+            self._last_stream_domain_size = None
+            st, _c, _o, _e, interps, m_meta = await self._arun_isomorphic_pipeline(
                 stdin,
                 opts,
                 timeout_s=timeout_s,
             )
             if st != RunStatus.SUCCEEDED:
                 return
+            self._last_stream_domain_size = m_meta.current_domain_size
             for mi in interps:
+                if mi.domain_size is not None:
+                    self._last_stream_domain_size = mi.domain_size
                 if on_model is not None:
                     r = on_model(mi, ())
                     if inspect.isawaitable(r):
@@ -467,12 +509,21 @@ class Mace4:
         inv = self._build_inv(opts, stdin=stdin, timeout_s=timeout_s)
         buf = Mace4InterpretationBuffer()
         runner = AsyncToolRunner()
+        m4 = self
 
         async def hook(e: Any) -> AsyncIterator[Any]:
             if isinstance(e, StdoutLine):
+                title = match_section_title_line(e.text)
+                if title is not None:
+                    dsz = domain_size_from_mace4_section_title(title)
+                    if dsz is not None:
+                        m4._last_stream_domain_size = dsz
                 for mi, warns in buf.feed(e.text + "\n"):
+                    if mi.domain_size is not None:
+                        m4._last_stream_domain_size = mi.domain_size
                     yield (mi, warns)
 
+        self._last_stream_domain_size = None
         async for ev in runner.stream_events(inv, parse_hook=hook):
             if isinstance(ev, tuple) and len(ev) == 2 and isinstance(ev[0], Mace4Interpretation):
                 mi, warns = ev
@@ -511,7 +562,7 @@ class Mace4:
             await event_queue.put(sse_lifecycle_event("running"))
             try:
                 if elim:
-                    st, code, _o, err, interps = await mace4_self._arun_isomorphic_pipeline(
+                    st, code, _o, err, interps, m_meta = await mace4_self._arun_isomorphic_pipeline(
                         stdin_s,
                         opts,
                         timeout_s=timeout_s,
@@ -520,6 +571,7 @@ class Mace4:
                     state.stderr_lines.clear()
                     state.stderr_lines.extend(err.splitlines())
                     state.lifecycle = _run_status_to_lifecycle(st)
+                    state.mace4_metadata = m_meta
                     for mi in interps:
                         state.models_found += 1
                         state.last_domain_size = mi.domain_size
@@ -537,6 +589,11 @@ class Mace4:
 
                 async def hook(e: Any) -> AsyncIterator[Any]:
                     if isinstance(e, StdoutLine):
+                        title = match_section_title_line(e.text)
+                        if title is not None:
+                            dsz = domain_size_from_mace4_section_title(title)
+                            if dsz is not None:
+                                state.last_domain_size = dsz
                         for mi, warns in buf.feed(e.text + "\n"):
                             yield (mi, warns)
 
@@ -545,6 +602,7 @@ class Mace4:
                     state.stderr_lines.clear()
                     state.stderr_lines.extend(res.stderr.splitlines())
                     state.lifecycle = _run_status_to_lifecycle(res.status)
+                    state.mace4_metadata = parse_mace4_stdout_metadata(res.stdout, stderr=res.stderr)
 
                 async for ev in runner.stream_events(inv, parse_hook=hook, on_complete=on_complete):
                     if isinstance(ev, StdoutLine):
