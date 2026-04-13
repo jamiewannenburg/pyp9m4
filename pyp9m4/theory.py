@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from pyp9m4.file_sources import StdinSource, read_theory_text
 from pyp9m4.io_kinds import HasTheoryText
 
 
@@ -46,6 +47,17 @@ class Theory(HasTheoryText):
         a = _normalize_lines(assumptions)
         g = _normalize_lines(goals)
         self._text = f"{opt_block}{_section('assumptions', a)}{_section('goals', g)}"
+
+    @classmethod
+    def from_file(
+        cls,
+        source: StdinSource,
+        *,
+        encoding: str = "utf-8",
+        errors: str = "replace",
+    ) -> Theory:
+        """Build from a path, path string, or readable stream (e.g. ``sys.stdin``, :class:`io.StringIO`)."""
+        return cls(text=read_theory_text(source, encoding=encoding, errors=errors))
 
     def to_theory_text(self) -> str:
         return self._text

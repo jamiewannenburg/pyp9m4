@@ -19,6 +19,7 @@ from pyp9m4.jobs import JobLifecycle, Prover9JobStatusSnapshot
 from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers.prover9 import Prover9Parsed, parse_prover9_output
 from pyp9m4.parsers.prover9_outcome import ProverOutcome, infer_prover_outcome
+from pyp9m4.file_sources import StdinSource, coerce_stdin_from_source
 from pyp9m4.resolver import BinaryResolver
 from pyp9m4.serialization import dataclass_to_json_dict
 from pyp9m4.runner import (
@@ -168,6 +169,7 @@ class Prover9:
     """
 
     __slots__ = (
+        "_bound_stdin_source",
         "_cwd",
         "_default_timeout_s",
         "_encoding",
@@ -201,6 +203,22 @@ class Prover9:
         self._env = dict(env) if env is not None else None
         self._encoding = encoding
         self._errors = errors
+        self._bound_stdin_source: StdinSource | None = None
+
+    @classmethod
+    def from_file(cls, source: StdinSource, **kwargs: Any) -> Prover9:
+        """Construct Prover9 and bind ``source`` as stdin when :meth:`run` / :meth:`arun` get ``input=None``."""
+        inst = cls(**kwargs)
+        inst._bound_stdin_source = source
+        return inst
+
+    def _resolve_run_stdin(self, input: str | bytes | Path | None) -> str | bytes | None:
+        if input is not None:
+            return _coerce_stdin(input)
+        b = self._bound_stdin_source
+        if b is not None:
+            return coerce_stdin_from_source(b, encoding=self._encoding, errors=self._errors)
+        return None
 
     @property
     def default_options(self) -> Prover9CliOptions:
@@ -270,7 +288,7 @@ class Prover9:
         **kwargs: Any,
     ) -> Prover9ProofResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         inv = self._build_inv(opts, stdin=stdin, timeout_s=timeout_s)
         res = await AsyncToolRunner().run(inv)
         return self._proof_result_from_run(res)
@@ -292,7 +310,7 @@ class Prover9:
         **kwargs: Any,
     ) -> Prover9ProofHandle:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         argv = self._build_argv(opts)
         inv = self._build_inv(opts, stdin=stdin, timeout_s=timeout_s)
         state = _Prover9JobState(argv=argv, lifecycle="pending")

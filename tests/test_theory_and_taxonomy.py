@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 from pyp9m4 import (
@@ -9,10 +10,15 @@ from pyp9m4 import (
     HasTheoryText,
     IOKind,
     Interpretation,
+    Interpformat,
+    InterpretationFormat,
     Model,
     Theory,
+    parse_interpretations_from_file,
+    parse_models_from_file,
 )
 from pyp9m4.parsers import Mace4Interpretation
+from pyp9m4.pipe import Stage
 
 
 def test_theory_from_assumptions_and_goals() -> None:
@@ -73,3 +79,47 @@ def test_theory_repr_truncates_long_text() -> None:
     r = repr(Theory(text=long))
     assert "…" in r
     assert "chars" in r
+
+
+def test_theory_from_file_path(tmp_path: Path) -> None:
+    p = tmp_path / "t.in"
+    p.write_text("formulas(assumptions).\na.\nend_of_list.\n", encoding="utf-8")
+    t = Theory.from_file(p)
+    assert "formulas(assumptions)" in str(t)
+
+
+def test_theory_from_file_bytesio() -> None:
+    bio = BytesIO(b"formulas(goals).\np.\nend_of_list.\n")
+    t = Theory.from_file(bio)
+    assert "p." in str(t)
+
+
+def test_parse_interpretations_from_file(tmp_path: Path) -> None:
+    snippet = """interpretation( 3, [number=1, seconds=0], [
+
+        function(e, [ 0 ]),
+
+]).
+"""
+    p = tmp_path / "m.out"
+    p.write_text(snippet, encoding="utf-8")
+    got = list(parse_interpretations_from_file(p))
+    assert len(got) == 1
+    assert got[0].domain_size == 3
+    assert parse_models_from_file is parse_interpretations_from_file
+
+
+def test_interpformat_from_file_models(tmp_path: Path) -> None:
+    p = tmp_path / "m.out"
+    p.write_text("interpretation( 1, [], []).\n", encoding="utf-8")
+    m = list(Interpformat.from_file(p).models())
+    assert len(m) == 1
+    assert m[0].domain_size == 1
+    assert InterpretationFormat is Interpformat
+
+
+def test_stage_from_file(tmp_path: Path) -> None:
+    p = tmp_path / "t.in"
+    p.write_text("x.", encoding="utf-8")
+    st = Stage.from_file(p, kind=IOKind.FORMULAS)
+    assert st.initial_stdin == b"x."

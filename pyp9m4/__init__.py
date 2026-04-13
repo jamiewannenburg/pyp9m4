@@ -17,6 +17,8 @@ Lower-level: :mod:`pyp9m4.resolver`, :mod:`pyp9m4.runner`. JSON: :func:`dataclas
 :func:`jsonify_for_api`.
 """
 
+__version__ = "0.2.2"
+
 from pyp9m4.job_manager import JobManager, JobManagerError, JobMetadata, ManagedJobSnapshot
 from pyp9m4.jobs import (
     JobLifecycle,
@@ -28,6 +30,7 @@ from pyp9m4.jobs import (
     is_job_lifecycle_string,
     job_status_snapshot_to_json_dict,
 )
+from pyp9m4.file_sources import StdinSource
 from pyp9m4.io_kinds import (
     HasInterpretationsFile,
     HasLadrStdinText,
@@ -46,6 +49,8 @@ from pyp9m4.parsers import (
     mace4_interpretations_only_stdout,
     parse_mace4_output,
     parse_mace4_stdout_metadata,
+    parse_interpretations_from_file,
+    parse_models_from_file,
     parse_pipeline_tool_output,
     parse_prover9_output,
 )
@@ -55,6 +60,7 @@ from pyp9m4.pipeline_facades import (
     ClauseTester,
     InterpFilter,
     InterpFormat,
+    InterpretationFormat,
     Interpformat,
     IsomorphismFilter,
     IsomorphismFilter2,
@@ -106,6 +112,7 @@ from pyp9m4.runner import (
 __all__ = [
     # Fluent API taxonomy (I/O kinds, theory builder, interpretation names)
     "IOKind",
+    "StdinSource",
     "HasTheoryText",
     "HasLadrStdinText",
     "HasInterpretationsFile",
@@ -117,6 +124,7 @@ __all__ = [
     "ClauseTester",
     "InterpFilter",
     "InterpFormat",
+    "InterpretationFormat",
     "Interpformat",
     "IsomorphismFilter",
     "IsomorphismFilter2",
@@ -176,6 +184,8 @@ __all__ = [
     "mace4_interpretations_only_stdout",
     "parse_mace4_output",
     "parse_mace4_stdout_metadata",
+    "parse_interpretations_from_file",
+    "parse_models_from_file",
     "parse_pipeline_tool_output",
     "inspect_pipeline_text",
     # Binary resolution (also used implicitly by facades)
@@ -199,5 +209,3 @@ __all__ = [
     "run_sync",
     "stream_events_sync",
 ]
-
-__version__ = "0.2.1"

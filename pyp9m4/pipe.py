@@ -11,6 +11,7 @@ from pathlib import Path
 from queue import Queue
 from typing import TYPE_CHECKING, Final
 
+from pyp9m4.file_sources import StdinSource, coerce_stdin_from_source
 from pyp9m4.io_kinds import IOKind
 from pyp9m4.parsers import Interpretation
 from pyp9m4.parsers.mace4 import Mace4InterpretationBuffer
@@ -119,6 +120,23 @@ class Stage:
             resolver=resolver,
             cleanup_paths=(),
         )
+
+    @classmethod
+    def from_file(
+        cls,
+        source: StdinSource,
+        *,
+        kind: IOKind,
+        cwd: Path | str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout_s: float | None = None,
+        resolver: BinaryResolver | None = None,
+        encoding: str = "utf-8",
+        errors: str = "replace",
+    ) -> Stage:
+        """Like :meth:`source`, loading stdin payload from a path or readable stream."""
+        stdin = coerce_stdin_from_source(source, encoding=encoding, errors=errors)
+        return cls.source(stdin, kind=kind, cwd=cwd, env=env, timeout_s=timeout_s, resolver=resolver)
 
     def _merge_invocation(self, inv: SubprocessInvocation) -> SubprocessInvocation:
         cwd = inv.cwd if inv.cwd is not None else self.cwd

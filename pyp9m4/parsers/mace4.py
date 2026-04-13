@@ -11,7 +11,7 @@ from itertools import product
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, TextIO
 
 from pyp9m4.parsers.common import (
     ParseWarning,
@@ -1164,6 +1164,25 @@ class Mace4InterpretationBuffer:
     def buffered_tail(self) -> str:
         """Text not yet part of a complete ``interpretation(...)`` (preamble or incomplete tail)."""
         return self._buf
+
+
+def parse_interpretations_from_file(
+    source: str | Path | BinaryIO | TextIO,
+    *,
+    encoding: str = "utf-8",
+    errors: str = "replace",
+) -> Iterator[Mace4Interpretation]:
+    """Yield each complete standard ``interpretation(...)`` while scanning a file line-by-line."""
+    from pyp9m4.file_sources import iter_lines_for_interpretation_parse
+
+    buf = Mace4InterpretationBuffer()
+    for line in iter_lines_for_interpretation_parse(source, encoding=encoding, errors=errors):
+        chunk = line if line.endswith("\n") else line + "\n"
+        for mi, _w in buf.feed(chunk):
+            yield mi
+
+
+parse_models_from_file = parse_interpretations_from_file
 
 
 def _try_parse_portable(text: str) -> tuple[tuple[object, ...], tuple[ParseWarning, ...]]:

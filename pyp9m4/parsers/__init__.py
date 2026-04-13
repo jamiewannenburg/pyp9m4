@@ -13,6 +13,8 @@ from pyp9m4.parsers.mace4 import (
     mace4_interpretations_only_stdout,
     parse_mace4_output,
     parse_mace4_stdout_metadata,
+    parse_interpretations_from_file,
+    parse_models_from_file,
 )
 from pyp9m4.parsers.pipeline import (
     PipelineTextInspection,
@@ -50,6 +52,8 @@ __all__ = [
     "parse_equals_key_values",
     "parse_mace4_output",
     "parse_mace4_stdout_metadata",
+    "parse_interpretations_from_file",
+    "parse_models_from_file",
     "parse_pipeline_tool_output",
     "parse_prover9_output",
     "split_ladr_section_blocks",

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
+from pyp9m4.file_sources import StdinSource, coerce_stdin_from_source
 from pyp9m4.event_stream import (
     sse_lifecycle_event,
     sse_model_found_event,
@@ -204,6 +205,7 @@ class Mace4:
     """
 
     __slots__ = (
+        "_bound_stdin_source",
         "_cwd",
         "_default_eliminate_iso",
         "_default_timeout_s",
@@ -258,6 +260,22 @@ class Mace4:
         self._encoding = encoding
         self._errors = errors
         self._last_stream_domain_size: int | None = None
+        self._bound_stdin_source: StdinSource | None = None
+
+    @classmethod
+    def from_file(cls, source: StdinSource, **kwargs: Any) -> Mace4:
+        """Construct Mace4 and bind ``source`` as stdin when :meth:`models` / :meth:`amodels` get ``input=None``."""
+        inst = cls(**kwargs)
+        inst._bound_stdin_source = source
+        return inst
+
+    def _resolve_run_stdin(self, input: str | bytes | Path | None) -> str | bytes | None:
+        if input is not None:
+            return _coerce_stdin(input)
+        b = self._bound_stdin_source
+        if b is not None:
+            return coerce_stdin_from_source(b, encoding=self._encoding, errors=self._errors)
+        return None
 
     @property
     def last_stream_domain_size(self) -> int | None:
@@ -391,7 +409,7 @@ class Mace4:
         **kwargs: Any,
     ) -> Iterator[Mace4Interpretation]:
         opts, timeout_s, elim = self._effective_options(options=options, kwargs=kwargs)
-        stdin_raw = _coerce_stdin(input)
+        stdin_raw = self._resolve_run_stdin(input)
         stdin_bytes: bytes | None
         if stdin_raw is None:
             stdin_bytes = None
@@ -482,7 +500,7 @@ class Mace4:
         **kwargs: Any,
     ) -> AsyncIterator[Mace4Interpretation]:
         opts, timeout_s, elim = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         if isinstance(stdin, bytes):
             stdin = stdin.decode(self._encoding, errors=self._errors)
 
@@ -542,7 +560,7 @@ class Mace4:
         **kwargs: Any,
     ) -> Mace4SearchHandle:
         opts, timeout_s, elim = self._effective_options(options=options, kwargs=kwargs)
-        stdin_raw = _coerce_stdin(input)
+        stdin_raw = self._resolve_run_stdin(input)
         if isinstance(stdin_raw, bytes):
             stdin_s = stdin_raw.decode(self._encoding, errors=self._errors)
         else:

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 from abc import ABC
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
+
+from pyp9m4.file_sources import StdinSource, coerce_stdin_from_source
 
 from pyp9m4.jobs import JobLifecycle
 from pyp9m4.options.clausefilter import ClausefilterCliOptions
@@ -21,6 +23,7 @@ from pyp9m4.options.renamer import RenamerCliOptions
 from pyp9m4.options.rewriter import RewriterCliOptions
 from pyp9m4.options.test_clause_eval import TestClauseEvalCliOptions
 from pyp9m4.options.tptp_to_ladr import TptpToLadrCliOptions
+from pyp9m4.parsers.mace4 import Mace4Interpretation, parse_interpretations_from_file
 from pyp9m4.parsers.pipeline import (
     PipelineTextInspection,
     PipelineTextResult,
@@ -43,6 +46,8 @@ _L2T_FIELDS: frozenset[str] = frozenset(f.name for f in fields(LadrToTptpCliOpti
 _RN_FIELDS: frozenset[str] = frozenset(f.name for f in fields(RenamerCliOptions))
 _TCE_FIELDS: frozenset[str] = frozenset(f.name for f in fields(TestClauseEvalCliOptions))
 _CT_FIELDS: frozenset[str] = frozenset(f.name for f in fields(ClausetesterCliOptions))
+
+_TFacade = TypeVar("_TFacade", bound="PipelineStdinFacadeBase")
 
 
 def _run_status_to_lifecycle(status: RunStatus) -> JobLifecycle:
@@ -115,6 +120,7 @@ class PipelineStdinFacadeBase(ABC):
     """Shared resolver, cwd/env, encoding, timeout defaults, and optional executable override."""
 
     __slots__ = (
+        "_bound_stdin_source",
         "_cwd",
         "_default_timeout_s",
         "_encoding",
@@ -144,6 +150,22 @@ class PipelineStdinFacadeBase(ABC):
         self._env = dict(env) if env is not None else None
         self._encoding = encoding
         self._errors = errors
+        self._bound_stdin_source: StdinSource | None = None
+
+    @classmethod
+    def from_file(cls: type[_TFacade], source: StdinSource, **kwargs: Any) -> _TFacade:
+        """Construct the facade and bind ``source`` as stdin when :meth:`run` / :meth:`arun` get ``input=None``."""
+        inst = cls(**kwargs)
+        inst._bound_stdin_source = source
+        return inst
+
+    def _resolve_run_stdin(self, input: str | bytes | Path | None) -> str | bytes | None:
+        if input is not None:
+            return _coerce_stdin(input)
+        b = self._bound_stdin_source
+        if b is not None:
+            return coerce_stdin_from_source(b, encoding=self._encoding, errors=self._errors)
+        return None
 
     def _resolved_exe(self) -> Path:
         return self._exe_override or self._resolver.resolve(self._resolver_tool)
@@ -251,7 +273,7 @@ class Isofilter(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(self._build_argv(opts), stdin, timeout_s=timeout_s)
 
     def run(
@@ -376,7 +398,7 @@ class Interpformat(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(self._build_argv(opts), stdin, timeout_s=timeout_s)
 
     def run(
@@ -388,8 +410,16 @@ class Interpformat(PipelineStdinFacadeBase):
     ) -> PipelineToolResult:
         return _sync_run_awaitable(lambda: self.arun(input, options=options, **kwargs))
 
+    def models(self) -> Iterator[Mace4Interpretation]:
+        """Parse the stream bound by :meth:`from_file` into interpretations (no ``interpformat`` subprocess)."""
+        b = self._bound_stdin_source
+        if b is None:
+            raise TypeError("Interpformat.models() requires Interpformat.from_file(...)")
+        yield from parse_interpretations_from_file(b, encoding=self._encoding, errors=self._errors)
+
 
 InterpFormat = Interpformat
+InterpretationFormat = Interpformat
 
 
 class Prooftrans(PipelineStdinFacadeBase):
@@ -466,7 +496,7 @@ class Prooftrans(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(self._build_argv(opts), stdin, timeout_s=timeout_s)
 
     def run(
@@ -555,7 +585,7 @@ class InterpFilter(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(self._argv_for(opts, formulas_file=formulas_file, test=test), stdin, timeout_s=timeout_s)
 
     def run(
@@ -645,7 +675,7 @@ class ClauseFilter(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(
             self._argv_for(opts, interpretations_file=interpretations_file, test=test),
             stdin,
@@ -742,7 +772,7 @@ class ClauseTester(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         eff_cwd = Path(cwd).resolve() if cwd is not None else self._cwd
         eff_env = dict(env) if env is not None else self._env
         eff_enc = encoding if encoding is not None else self._encoding
@@ -851,7 +881,7 @@ class Rewriter(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(self._argv_for(opts, demod_file=demod_file), stdin, timeout_s=timeout_s)
 
     def run(
@@ -927,7 +957,7 @@ class TptpToLadr(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(tuple(opts.to_argv()), stdin, timeout_s=timeout_s)
 
     def run(
@@ -1002,7 +1032,7 @@ class LadrToTptp(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(tuple(opts.to_argv()), stdin, timeout_s=timeout_s)
 
     def run(
@@ -1077,7 +1107,7 @@ class Renamer(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(tuple(opts.to_argv()), stdin, timeout_s=timeout_s)
 
     def run(
@@ -1152,7 +1182,7 @@ class TestClauseEval(PipelineStdinFacadeBase):
         **kwargs: Any,
     ) -> PipelineToolResult:
         opts, timeout_s = self._effective_options(options=options, kwargs=kwargs)
-        stdin = _coerce_stdin(input)
+        stdin = self._resolve_run_stdin(input)
         return await self._arun_argv(tuple(opts.to_argv()), stdin, timeout_s=timeout_s)
 
     def run(
@@ -1175,6 +1205,7 @@ __all__ = [
     "IsomorphismFilter2",
     "Interpformat",
     "InterpFormat",
+    "InterpretationFormat",
     "Prooftrans",
     "ProofTrans",
     "InterpFilter",
