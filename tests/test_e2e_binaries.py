@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from pyp9m4 import Interpformat, Isofilter, Mace4, Prooftrans, Prover9, ProverOutcome, arun
+from pyp9m4 import Interpformat, Isofilter, LadrToTptp, Mace4, Prooftrans, Prover9, ProverOutcome, arun
 from pyp9m4.options.interpformat import InterpformatCliOptions
 from pyp9m4.options.prover9 import Prover9CliOptions
 from pyp9m4.parsers import parse_prover9_output
@@ -202,3 +202,13 @@ async def test_e2e_toolkit_arun_prooftrans(resolver: BinaryResolver) -> None:
     assert out.pipeline is not None
     assert out.pipeline.lifecycle == "succeeded"
     assert out.pipeline.exit_code == 0
+
+
+@pytest.mark.integration
+def test_e2e_ladr_to_tptp_trivial(resolver: BinaryResolver) -> None:
+    """McCune's ladr_to_tptp always exit(1); facade still reports succeeded."""
+    text = (_CORPUS / "trivial.in").read_text(encoding="utf-8")
+    out = LadrToTptp(resolver=resolver, timeout_s=60).run(text)
+    assert out.lifecycle == "succeeded"
+    assert out.exit_code == 1
+    assert "fof(" in out.stdout or "cnf(" in out.stdout

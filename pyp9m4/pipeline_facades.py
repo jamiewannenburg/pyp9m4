@@ -29,6 +29,7 @@ from pyp9m4.parsers.pipeline import (
     PipelineTextResult,
     inspect_pipeline_text,
     parse_pipeline_tool_output,
+    stdout_contains_tptp_formula,
 )
 from pyp9m4.resolver import BinaryResolver
 from pyp9m4.runner import AsyncToolRunner, RunStatus, SubprocessInvocation, ToolRunResult, _sync_run_awaitable
@@ -185,7 +186,12 @@ class PipelineStdinFacadeBase(ABC):
             timeout_s=timeout_s,
             encoding=self._encoding,
             errors=self._errors,
+            blocking_stdio=True,
         )
+
+    def _adjust_run_result(self, res: ToolRunResult) -> ToolRunResult:
+        """Hook for tools whose native exit code does not match :class:`RunStatus`."""
+        return res
 
     async def _arun_argv(
         self,
@@ -196,7 +202,7 @@ class PipelineStdinFacadeBase(ABC):
     ) -> PipelineToolResult:
         inv = self._inv_from_argv_tail(argv_tail, stdin=stdin, timeout_s=timeout_s)
         res = await AsyncToolRunner().run(inv)
-        return _pipeline_result_from_run(res)
+        return _pipeline_result_from_run(self._adjust_run_result(res))
 
 
 class Isofilter(PipelineStdinFacadeBase):
@@ -785,6 +791,7 @@ class ClauseTester(PipelineStdinFacadeBase):
             timeout_s=timeout_s,
             encoding=eff_enc,
             errors=eff_err,
+            blocking_stdio=True,
         )
         res = await AsyncToolRunner().run(inv)
         return _pipeline_result_from_run(res)
@@ -971,7 +978,12 @@ class TptpToLadr(PipelineStdinFacadeBase):
 
 
 class LadrToTptp(PipelineStdinFacadeBase):
-    """``ladr_to_tptp``: LADR-oriented input on stdin."""
+    """``ladr_to_tptp``: LADR-oriented input on stdin.
+
+    McCune's binary always ``exit(1)`` after a successful conversion. When stdout
+    contains TPTP formulas, :meth:`arun` / :meth:`run` report ``lifecycle='succeeded'``
+    and leave the raw exit code as ``1``.
+    """
 
     _resolver_tool = "ladr_to_tptp"
     __slots__ = ("_instance_options",)
@@ -1023,6 +1035,15 @@ class LadrToTptp(PipelineStdinFacadeBase):
         eff = replace(eff, **l_kw)
         timeout_s = fac_kw["timeout_s"] if "timeout_s" in fac_kw else self._default_timeout_s
         return eff, timeout_s
+
+    def _adjust_run_result(self, res: ToolRunResult) -> ToolRunResult:
+        if (
+            res.status == RunStatus.FAILED
+            and res.exit_code == 1
+            and stdout_contains_tptp_formula(res.stdout)
+        ):
+            return replace(res, status=RunStatus.SUCCEEDED)
+        return res
 
     async def arun(
         self,

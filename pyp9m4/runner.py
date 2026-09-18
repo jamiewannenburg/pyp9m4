@@ -82,6 +82,13 @@ class SubprocessInvocation:
     errors: str = "replace"
     tee_stdout_path: Path | str | None = None
     tee_stderr_path: Path | str | None = None
+    blocking_stdio: bool = False
+    """If True, run via ``subprocess.Popen`` + ``communicate`` instead of asyncio pipes.
+
+    Windows Proactor overlapped pipes can deliver empty stdin/stdout for short-lived
+    LADR tools (notably ``ladr_to_tptp``) once other children are competing for handles.
+    Capture-only pipeline facades set this; streaming APIs leave it False.
+    """
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-friendly invocation (paths as ``str``, ``bytes`` stdin as base64)."""
@@ -583,6 +590,18 @@ class AsyncToolRunner:
         proc: asyncio.subprocess.Process | None = None
 
         try:
+            if inv.blocking_stdio:
+                # Ordinary Win32 pipes; asyncio Proactor handles can drop stdin/stdout.
+                return await self._execute_blocking_fallback(
+                    inv=inv,
+                    argv_os=argv_os,
+                    cwd=cwd,
+                    stdin_data=stdin_data,
+                    line_handlers=line_handlers,
+                    tee_out_f=tee_out_f,
+                    tee_err_f=tee_err_f,
+                    start=start,
+                )
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *argv_os,

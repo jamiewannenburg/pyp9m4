@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from pyp9m4 import Isofilter, Prooftrans
+from pyp9m4 import Isofilter, LadrToTptp, Prooftrans
 from pyp9m4.options.interpformat import InterpformatCliOptions
 from pyp9m4.options.isofilter import IsofilterCliOptions
 from pyp9m4.options.prooftrans import ProofTransCliOptions
@@ -224,3 +224,44 @@ def test_prooftrans_run_sync_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     r = pt.run(options=ProofTransCliOptions())
     assert r.lifecycle == "succeeded"
     assert any("prooftrans" in c.lower() for c in r.inspection.percent_comments)
+
+
+@pytest.mark.asyncio
+async def test_ladr_to_tptp_exit_1_with_formulas_is_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[object] = []
+
+    async def fake_run(self: AsyncToolRunner, inv) -> ToolRunResult:
+        captured.append(inv)
+        return ToolRunResult(
+            status=RunStatus.FAILED,
+            argv=inv.argv,
+            exit_code=1,
+            duration_s=0.01,
+            stdout="cnf(sos,axiom,p).\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
+    r = await LadrToTptp().arun("formulas(assumptions).\np.\nend_of_list.\n")
+    assert r.lifecycle == "succeeded"
+    assert r.exit_code == 1
+    assert "cnf(" in r.stdout
+    assert captured and captured[0].blocking_stdio is True
+
+
+@pytest.mark.asyncio
+async def test_ladr_to_tptp_exit_1_without_formulas_is_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run(self: AsyncToolRunner, inv) -> ToolRunResult:
+        return ToolRunResult(
+            status=RunStatus.FAILED,
+            argv=inv.argv,
+            exit_code=1,
+            duration_s=0.01,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(AsyncToolRunner, "run", fake_run)
+    r = await LadrToTptp().arun("formulas(assumptions).\nend_of_list.\n")
+    assert r.lifecycle == "failed"
+    assert r.exit_code == 1

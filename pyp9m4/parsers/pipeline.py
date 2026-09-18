@@ -30,6 +30,12 @@ class PipelineTextInspection:
 
 _PERCENT_LINE = re.compile(r"^\s*%.*$", re.MULTILINE)
 _ERR_HINT = re.compile(r"error|fatal", re.IGNORECASE)
+_TPTP_FORMULA_RE = re.compile(r"(?:fof|cnf|tff|thf)\s*\(", re.IGNORECASE)
+
+
+def stdout_contains_tptp_formula(stdout: str) -> bool:
+    """True if *stdout* contains a TPTP ``fof`` / ``cnf`` / ``tff`` / ``thf`` formula."""
+    return bool(_TPTP_FORMULA_RE.search(stdout or ""))
 
 
 def parse_pipeline_tool_output(stdout: str, stderr: str = "") -> PipelineTextResult:

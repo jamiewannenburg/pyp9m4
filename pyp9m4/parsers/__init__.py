@@ -21,6 +21,7 @@ from pyp9m4.parsers.pipeline import (
     PipelineTextResult,
     inspect_pipeline_text,
     parse_pipeline_tool_output,
+    stdout_contains_tptp_formula,
 )
 from pyp9m4.parsers.prover9 import ProofSegment, Prover9Parsed, parse_prover9_output
 from pyp9m4.parsers.prover9_outcome import ProverOutcome, infer_prover_outcome
@@ -57,4 +58,5 @@ __all__ = [
     "parse_pipeline_tool_output",
     "parse_prover9_output",
     "split_ladr_section_blocks",
+    "stdout_contains_tptp_formula",
 ]
