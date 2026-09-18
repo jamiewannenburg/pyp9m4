@@ -201,3 +201,13 @@ async def test_run_fallback_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     inv = SubprocessInvocation(argv=_py("import time; time.sleep(10)"), timeout_s=0.1)
     res = await r.run(inv)
     assert res.status == RunStatus.TIMED_OUT
+
+
+@pytest.mark.asyncio
+async def test_blocking_stdio_stdin_roundtrip() -> None:
+    r = AsyncToolRunner()
+    code = "import sys; print(sys.stdin.read().strip())"
+    inv = SubprocessInvocation(argv=_py(code), stdin="hello-blocking\n", blocking_stdio=True)
+    res = await r.run(inv)
+    assert res.status == RunStatus.SUCCEEDED
+    assert res.stdout.strip() == "hello-blocking"

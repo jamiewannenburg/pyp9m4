@@ -397,6 +397,15 @@ def test_pipeline_helpers() -> None:
     assert ins2.looks_like_error is True
 
 
+def test_stdout_contains_tptp_formula() -> None:
+    from pyp9m4.parsers.pipeline import stdout_contains_tptp_formula
+
+    assert stdout_contains_tptp_formula("cnf(sos,axiom,p).\n")
+    assert stdout_contains_tptp_formula("fof(goals,conjecture,p).")
+    assert not stdout_contains_tptp_formula("% comments only\n")
+    assert not stdout_contains_tptp_formula("")
+
+
 def test_pipeline_smoke_prooftrans_like_stdout() -> None:
     """Smoke: pipeline-style tool output with section markers and percent comments."""
     stdout = """% prooftrans output
